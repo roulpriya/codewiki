@@ -1,0 +1,12 @@
+services:
+  codewiki:
+    build: .
+    image: codewiki:local
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      - codewiki-data:/data
+
+volumes:
+  codewiki-data:
