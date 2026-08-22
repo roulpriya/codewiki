@@ -27,7 +27,7 @@ type Discovery = { viewer: Viewer; repositories: Repository[] };
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, init);
   if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
+    const body = (await response.json().catch(() => ({}))) as { error?: string; message?: string };
     throw new Error(body.error ?? body.message ?? `Request failed (${response.status}).`);
   }
   return response.json() as Promise<T>;
@@ -35,10 +35,16 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 function relativeDate(value: string) {
   const days = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000));
-  if (days === 0) return "Updated today";
-  if (days === 1) return "Updated yesterday";
-  if (days < 30) return `Updated ${days} days ago`;
-  return `Updated ${new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" }).format(new Date(value))}`;
+  if (days === 0) return "updated today";
+  if (days === 1) return "updated yesterday";
+  if (days < 30) return `updated ${days} days ago`;
+  return `updated ${new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" }).format(new Date(value))}`;
+}
+
+function importCopy(status: Repository["importStatus"]) {
+  if (status === "ready") return "indexed";
+  if (status === "failed") return "import failed";
+  return "indexing…";
 }
 
 export default function DiscoverRepositories() {
@@ -67,7 +73,11 @@ export default function DiscoverRepositories() {
     return (discovery?.repositories ?? []).filter((repository) => {
       if (visibility === "private" && !repository.private) return false;
       if (visibility === "public" && repository.private) return false;
-      return !term || repository.fullName.toLowerCase().includes(term) || repository.description?.toLowerCase().includes(term);
+      return (
+        !term ||
+        repository.fullName.toLowerCase().includes(term) ||
+        (repository.description ?? "").toLowerCase().includes(term)
+      );
     });
   }, [discovery?.repositories, query, visibility]);
 
@@ -80,7 +90,18 @@ export default function DiscoverRepositories() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ owner: repository.owner, name: repository.name }),
       });
-      setDiscovery((current) => current ? { ...current, repositories: current.repositories.map((record) => record.id === repository.id ? { ...record, importedRepositoryId: imported.id, importStatus: "queued" } : record) } : current);
+      setDiscovery((current) =>
+        current
+          ? {
+              ...current,
+              repositories: current.repositories.map((record) =>
+                record.id === repository.id
+                  ? { ...record, importedRepositoryId: imported.id, importStatus: "queued" }
+                  : record,
+              ),
+            }
+          : current,
+      );
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Import could not be started.");
     } finally {
@@ -88,24 +109,133 @@ export default function DiscoverRepositories() {
     }
   }
 
-  return <main className="discover-page">
-    <header className="discover-topbar"><Link className="brand dark-brand" href="/"><span className="brand-mark">cw</span><span>codewiki</span></Link><Link className="back-link" href="/">← Back to wiki</Link></header>
-    <section className="discover-hero">
-      <div><p className="eyebrow">REPOSITORY DISCOVERY</p><h1>Choose what Codewiki should understand.</h1><p>Browse repositories available to your configured GitHub account. Importing creates a local, searchable wiki and keeps it synced.</p></div>
-      {discovery?.viewer && <a className="viewer-card" href={discovery.viewer.htmlUrl} target="_blank" rel="noreferrer"><Image src={discovery.viewer.avatarUrl} width={44} height={44} unoptimized alt="" /><span><small>CONNECTED AS</small><strong>{discovery.viewer.name ?? discovery.viewer.login}</strong><b>@{discovery.viewer.login}</b></span></a>}
-    </section>
+  return (
+    <>
+      <header className="topbar">
+        <Link className="topbar-brand" href="/">
+          Codewiki
+        </Link>
+        <span className="crumb">
+          <span className="crumb-sep">/</span>
+          <span className="crumb-repo">discover</span>
+        </span>
+        <div className="topbar-search">
+          <label className="sr-only" htmlFor="discover-search">
+            Search repositories
+          </label>
+          <input
+            className="input"
+            id="discover-search"
+            type="text"
+            placeholder="Search by name or description"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+        <div className="topbar-actions">
+          <Link className="btn btn-outline btn-sm" href="/">
+            Back to wiki
+          </Link>
+        </div>
+      </header>
 
-    <section className="repository-browser">
-      <div className="browser-toolbar"><label className="repository-search"><span>⌕</span><input aria-label="Search repositories" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name or description" /></label><div className="visibility-filter" aria-label="Filter by visibility">{(["all", "public", "private"] as const).map((item) => <button className={visibility === item ? "active" : ""} key={item} type="button" onClick={() => setVisibility(item)}>{item}</button>)}</div></div>
-      <div className="repository-count"><strong>{filtered.length} repositories</strong><span>Only repositories visible to the configured token are shown.</span></div>
-      {error && <div className="error-banner discover-error">{error}<button type="button" onClick={() => void load()}>Try again</button></div>}
-      {!discovery && !error ? <div className="repository-loading">Loading repositories from GitHub…</div> : <div className="repository-grid">{filtered.map((repository) => <article className="repository-card" key={repository.id}>
-        <div className="repository-card-top"><span className="repo-icon">{repository.private ? "◆" : "◇"}</span><div><h2>{repository.name}</h2><p>{repository.owner}</p></div><span className={repository.private ? "visibility private" : "visibility"}>{repository.private ? "Private" : "Public"}</span></div>
-        <p className="repository-description">{repository.description || "No repository description provided."}</p>
-        <div className="repository-facts"><span>{repository.language || "Code"}</span>{repository.fork && <span>Fork</span>}{repository.archived && <span>Archived</span>}<span>★ {repository.stars}</span><span>{relativeDate(repository.updatedAt)}</span></div>
-        <div className="repository-card-actions">{repository.importedRepositoryId ? <><span className={`import-state ${repository.importStatus ?? "idle"}`}>{repository.importStatus === "ready" ? "✓ Ready" : repository.importStatus === "failed" ? "Import failed" : "Indexing…"}</span><a href={`/?repository=${repository.importedRepositoryId}`}>Open wiki →</a></> : <><a href={repository.htmlUrl} target="_blank" rel="noreferrer">View on GitHub</a><button type="button" disabled={importing === repository.fullName || repository.archived} onClick={() => void importRepository(repository)}>{importing === repository.fullName ? "Starting…" : repository.archived ? "Archived" : "Import repository"}</button></>}</div>
-      </article>)}</div>}
-      {discovery && filtered.length === 0 && <div className="repository-empty"><strong>No matching repositories</strong><p>Try a different search or visibility filter.</p></div>}
-    </section>
-  </main>;
+      {error && (
+        <div className="banner" role="alert">
+          {error}
+          <button type="button" onClick={() => void load()}>
+            Try again
+          </button>
+        </div>
+      )}
+
+      <main className="page">
+        <h1 className="page-title">Choose what Codewiki should understand</h1>
+        <p className="page-lede">
+          Every repository your configured access token can read. Adding one builds a local, source-cited wiki and keeps
+          it synced with the default branch.
+        </p>
+
+        {discovery?.viewer && (
+          <a className="viewer" href={discovery.viewer.htmlUrl} target="_blank" rel="noreferrer">
+            <Image src={discovery.viewer.avatarUrl} width={36} height={36} unoptimized alt="" />
+            <span className="viewer-text">
+              <span className="viewer-label">Connected as</span>
+              <span className="viewer-name">
+                {discovery.viewer.name ?? discovery.viewer.login}{" "}
+                <b className="viewer-login">@{discovery.viewer.login}</b>
+              </span>
+            </span>
+          </a>
+        )}
+
+        <div className="repos-toolbar">
+          <span className="page-lede" style={{ margin: 0, flex: 1 }}>
+            {discovery ? `${filtered.length} repositories` : "Loading repositories from GitHub…"}
+          </span>
+          <div className="seg" aria-label="Filter by visibility">
+            {(["all", "public", "private"] as const).map((item) => (
+              <button
+                className={visibility === item ? "is-active" : ""}
+                key={item}
+                type="button"
+                onClick={() => setVisibility(item)}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="rows">
+          {filtered.map((repository) => (
+            <div className="repo-row" key={repository.id}>
+              <span className="repo-row-main">
+                <span className="repo-row-name">{repository.fullName}</span>
+                <span className="repo-row-desc">{repository.description || "No description provided."}</span>
+                <span className="facts">
+                  <span>{repository.private ? "Private" : "Public"}</span>
+                  {repository.language && <span>{repository.language}</span>}
+                  {repository.fork && <span>Fork</span>}
+                  {repository.archived && <span>Archived</span>}
+                  <span>★ {repository.stars}</span>
+                  <span>{relativeDate(repository.updatedAt)}</span>
+                </span>
+              </span>
+
+              {repository.importedRepositoryId ? (
+                <>
+                  <span
+                    className={`repo-row-meta ${repository.importStatus === "failed" ? "is-failed" : repository.importStatus === "ready" ? "" : "is-busy"}`}
+                  >
+                    {importCopy(repository.importStatus)}
+                  </span>
+                  <Link className="btn btn-outline btn-sm" href={`/?repository=${repository.importedRepositoryId}`}>
+                    Open
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <a className="repo-row-meta is-dim" href={repository.htmlUrl} target="_blank" rel="noreferrer">
+                    GitHub ↗
+                  </a>
+                  <button
+                    className="btn btn-accent btn-sm"
+                    type="button"
+                    disabled={importing === repository.fullName || repository.archived}
+                    onClick={() => void importRepository(repository)}
+                  >
+                    {importing === repository.fullName ? "Adding…" : repository.archived ? "Archived" : "Add"}
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+
+          {discovery && filtered.length === 0 && (
+            <p className="empty-note">No repository matches that search or filter.</p>
+          )}
+        </div>
+      </main>
+    </>
+  );
 }
