@@ -63,3 +63,54 @@ and wiki are retained without downloading files or calling the OpenAI API.
 When the SHA changes—from a merged pull request or a direct commit—Codewiki
 creates a new snapshot, index, and cited wiki revision. Use **Check now** in the
 interface to run the same check manually.
+
+## Local MCP server
+
+Codewiki includes a local `stdio` MCP server that exposes repository discovery,
+status, overview, grounded Q&A, import, and update-check tools. Keep the
+Codewiki application running, then start the MCP server with:
+
+```sh
+CODEWIKI_API_ORIGIN=http://127.0.0.1:3000/api npm run mcp
+```
+
+The available tools are `list_repositories`, `discover_repositories`,
+`get_repository_status`, `get_repository_overview`, `ask_question`,
+`import_repository`, and `check_repository`. Read-only tools are annotated
+separately from operations that import or synchronize local data.
+
+To register the local server with Codex, use the absolute project path and the
+port where Codewiki is running:
+
+```sh
+codex mcp add codewiki \
+  --env CODEWIKI_API_ORIGIN=http://127.0.0.1:3000/api \
+  -- npm --prefix /absolute/path/to/code-wiki run mcp --silent
+```
+
+Register it with Claude Code at user scope so it is available across projects:
+
+```sh
+claude mcp add --scope user codewiki \
+  -e CODEWIKI_API_ORIGIN=http://127.0.0.1:3000/api \
+  -- npm --prefix /absolute/path/to/code-wiki run mcp --silent
+```
+
+Keep the Codewiki application running while either client uses the MCP server.
+After registration, restart each client so it reloads its MCP configuration:
+
+- **Codex desktop:** press `Command-Q`, reopen Codex, and start a new task. Open
+  MCP settings or enter `/mcp` to confirm that `codewiki` is enabled.
+- **Claude Code:** enter `/exit` or press `Control-C`, run `claude` again, and
+  enter `/mcp` to confirm that `codewiki` is connected.
+
+You can also verify the saved configuration from a terminal:
+
+```sh
+codex mcp get codewiki
+claude mcp get codewiki
+```
+
+If the application uses a different port, change `CODEWIKI_API_ORIGIN`. For
+example, the current local test instance on port `3100` uses
+`http://127.0.0.1:3100/api`.

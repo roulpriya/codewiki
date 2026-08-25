@@ -45,9 +45,9 @@ type ChatMessage = { id: string; who: "You" | "Codewiki"; text: string; cites: C
 const BUSY: RepositoryStatus[] = ["queued", "checking", "running"];
 
 const STARTERS = [
-  "How does this project work end to end?",
-  "Where should a new developer start?",
-  "What are the biggest risks or unfinished areas?",
+  "Trace the main execution flow from entry point to output.",
+  "Which files and concepts should a new developer study first, and why?",
+  "What TODOs, incomplete implementations, missing error handling, or test gaps are visible in the indexed evidence?",
 ];
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
