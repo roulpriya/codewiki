@@ -2,19 +2,22 @@
   "name": "codewiki",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "bun@1.3.12",
   "engines": {
-    "node": ">=22.13.0"
+    "bun": ">=1.3.12"
   },
   "scripts": {
-    "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
-    "api": "tsx server/index.ts",
-    "mcp": "tsx mcp/server.ts",
-    "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
-    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
-    "test": "npm run build && node --test tests/*.test.mjs",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
+    "dev": "bunx vinext dev",
+    "api": "bun run src/server/index.ts",
+    "mcp": "bun run src/mcp/server.ts",
+    "claude": "bun run src/claude/agent.ts",
+    "build": "bunx vinext build",
+    "start": "bunx vinext start",
+    "test": "bun run build && bun test tests/*.test.mjs",
+    "lint": "bunx eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.246",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "fastify": "^5.12.1",
     "openai": "^7.5.0",
@@ -23,15 +26,11 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.37.1",
     "@eslint/js": "9.39.4",
-    "@next/eslint-plugin-next": "16.2.6",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.26",
     "eslint": "9.39.4",
     "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-react": "7.37.5",
@@ -39,12 +38,10 @@
     "globals": "16.4.0",
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
-    "tsx": "^4.23.12",
     "typescript": "5.9.3",
     "typescript-eslint": "8.59.3",
     "vinext": "1.0.0-beta.2",
-    "vite": "8.0.13",
-    "wrangler": "4.92.0"
+    "vite": "8.0.13"
   },
   "overrides": {
     "ws": "^8.21.0"

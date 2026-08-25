@@ -1,11 +1,11 @@
-FROM node:22-bookworm-slim
+FROM oven/bun:1.3.12-slim
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 COPY . .
-RUN npm run build
+RUN bun run build
 
 COPY docker/entrypoint.sh /usr/local/bin/codewiki
 RUN chmod +x /usr/local/bin/codewiki && mkdir -p /data

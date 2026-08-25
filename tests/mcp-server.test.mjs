@@ -6,7 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const tsx = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
+const bun = process.execPath;
 const repository = { id: "a9a9d38d-c00b-4a9d-88a2-6880fd70a606", owner: "inputforge", name: "agentforge", default_branch: "main", indexed_sha: "abc123", status: "ready", created_at: "2026-08-22T00:00:00.000Z" };
 
 test("Codewiki MCP exposes tools and returns grounded answers", async (t) => {
@@ -23,7 +23,7 @@ test("Codewiki MCP exposes tools and returns grounded answers", async (t) => {
   assert.ok(address && typeof address === "object");
 
   const environment = Object.fromEntries(Object.entries(process.env).filter((entry) => typeof entry[1] === "string"));
-  const transport = new StdioClientTransport({ command: tsx, args: ["mcp/server.ts"], cwd: root, env: { ...environment, CODEWIKI_API_ORIGIN: `http://127.0.0.1:${address.port}/api` }, stderr: "pipe" });
+  const transport = new StdioClientTransport({ command: bun, args: ["run", "src/mcp/server.ts"], cwd: root, env: { ...environment, CODEWIKI_API_ORIGIN: `http://127.0.0.1:${address.port}/api` }, stderr: "pipe" });
   const client = new Client({ name: "codewiki-test", version: "1.0.0" });
   await client.connect(transport);
   t.after(() => client.close());

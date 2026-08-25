@@ -7,6 +7,8 @@ is stored as an ordinary file beneath one data directory.
 
 ## Run it
 
+Codewiki requires [Bun](https://bun.sh) 1.3.12 or newer for local development.
+
 Create a fine-grained GitHub personal access token with **Metadata: read** and
 **Contents: read** for the repositories you want to import. If an organization
 requires SSO, authorize the token for that organization.
@@ -53,6 +55,19 @@ database recovery step. Back up `/data` to preserve the knowledge base.
 PostgreSQL, Redis, pgvector, S3, MinIO, GitHub Apps, OAuth, teams, and
 multi-user workflows are intentionally outside this local version.
 
+## Claude Agent SDK
+
+Codewiki includes a read-only Claude Agent SDK entrypoint for asking questions
+about this workspace. Set `ANTHROPIC_API_KEY` in `.env` (or sign in with Claude
+Code), then run:
+
+```sh
+bun run claude -- "Explain the repository architecture."
+```
+
+The agent is limited to `Read`, `Glob`, and `Grep`, executes with Bun, and has
+its working directory set to this repository.
+
 ## Repository sync
 
 Codewiki checks repositories when the app starts if their last check is due,
@@ -71,7 +86,7 @@ status, overview, grounded Q&A, import, and update-check tools. Keep the
 Codewiki application running, then start the MCP server with:
 
 ```sh
-CODEWIKI_API_ORIGIN=http://127.0.0.1:3000/api npm run mcp
+CODEWIKI_API_ORIGIN=http://127.0.0.1:3000/api bun run mcp
 ```
 
 The available tools are `list_repositories`, `discover_repositories`,
@@ -85,7 +100,7 @@ port where Codewiki is running:
 ```sh
 codex mcp add codewiki \
   --env CODEWIKI_API_ORIGIN=http://127.0.0.1:3000/api \
-  -- npm --prefix /absolute/path/to/code-wiki run mcp --silent
+  -- bun --cwd /absolute/path/to/code-wiki run mcp
 ```
 
 Register it with Claude Code at user scope so it is available across projects:
@@ -93,7 +108,7 @@ Register it with Claude Code at user scope so it is available across projects:
 ```sh
 claude mcp add --scope user codewiki \
   -e CODEWIKI_API_ORIGIN=http://127.0.0.1:3000/api \
-  -- npm --prefix /absolute/path/to/code-wiki run mcp --silent
+  -- bun --cwd /absolute/path/to/code-wiki run mcp
 ```
 
 Keep the Codewiki application running while either client uses the MCP server.

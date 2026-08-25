@@ -2,9 +2,9 @@
 set -eu
 
 mkdir -p "${DATA_DIR:-/data}"
-npm run start -- --host 0.0.0.0 &
+bun run start -- --host 0.0.0.0 &
 web_pid=$!
-npm run api &
+bun run api &
 api_pid=$!
 
 cleanup() {
