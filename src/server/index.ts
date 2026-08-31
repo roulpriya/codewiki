@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { z } from "zod";
 import { config } from "./config.js";
+import { aiStatus, saveOpenAIApiKey, startClaudeLogin, startCodexLogin } from "./ai.js";
 import { githubAuthStatus, listAccessibleRepositories, readRepository, readViewer, startGitHubCliLogin } from "./github.js";
 import { enqueue, enqueueAll, resumeInterruptedJobs, startNightlyScheduler } from "./jobs.js";
 import { answerQuestion } from "./knowledge.js";
@@ -18,6 +19,28 @@ app.get("/health", async () => ({ ok: true, mode: "local-filesystem" }));
 app.get("/repositories", async () => (await readState()).repositories.sort((left, right) => right.created_at.localeCompare(left.created_at)));
 
 app.get("/github/auth", async () => githubAuthStatus());
+
+app.get("/ai/status", async () => aiStatus());
+
+app.post("/ai/claude/login", async (_request, reply) => {
+  try { return reply.code(202).send(await startClaudeLogin()); }
+  catch (error) { return reply.code(503).send({ error: error instanceof Error ? error.message : "Claude sign-in could not be started." }); }
+});
+
+app.post("/ai/codex/login", async (_request, reply) => {
+  try { return reply.code(202).send(await startCodexLogin()); }
+  catch (error) { return reply.code(503).send({ error: error instanceof Error ? error.message : "Codex sign-in could not be started." }); }
+});
+
+app.put("/ai/openai-key", async (request, reply) => {
+  try {
+    const { apiKey } = z.object({ apiKey: z.string() }).parse(request.body);
+    await saveOpenAIApiKey(apiKey);
+    return reply.code(204).send();
+  } catch (error) {
+    return reply.code(400).send({ error: error instanceof Error ? error.message : "OpenAI API key could not be saved." });
+  }
+});
 
 app.post("/github/auth/login", async (_request, reply) => {
   try {

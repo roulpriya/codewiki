@@ -115,6 +115,13 @@ a:hover { color: var(--n-100); }
 .input:disabled { opacity: 0.5; cursor: not-allowed; }
 .input-lg { padding: 9px 12px; font-size: 14px; background: var(--surface-input); border-color: var(--line-bright); }
 
+.settings-page { max-width: 760px; }
+.settings-card { margin-top: 18px; padding: 20px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); }
+.settings-card h2 { margin: 0; font-size: 15px; color: var(--n-100); }
+.settings-card p { margin: 6px 0 14px; color: var(--n-400); }
+.settings-key-row { display: flex; gap: 10px; }
+.settings-key-row .input { flex: 1; }
+
 /* ── top bar ─────────────────────────────────────────────────────── */
 
 .topbar {

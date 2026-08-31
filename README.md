@@ -36,12 +36,26 @@ with **Metadata: read** and **Contents: read** for the repositories you want to
 import. If an organization requires SSO, authorize the token for that
 organization.
 
-Copy `.env.example` to `.env` if you are using a token (and optionally add an
-OpenAI API key for generated prose), then start Codewiki:
+Copy `.env.example` to `.env` if you are using a token, then start Codewiki:
 
 ```sh
 docker compose up --build
 ```
+
+## AI provider
+
+Open **AI settings** in Codewiki to connect a provider for generated wiki pages
+and grounded answers. Codewiki prefers a signed-in Codex CLI (your eligible
+ChatGPT plan), then Claude Code (an eligible Claude subscription), and finally
+an OpenAI API key. The settings page can start either CLI's browser sign-in
+flow. This works only when the app runs on the same machine as the CLI session.
+
+ChatGPT and the OpenAI API have separate billing, so a ChatGPT subscription
+cannot be used directly by the OpenAI SDK. If neither subscription provider is
+available, save an OpenAI API key in AI settings or set `OPENAI_API_KEY` in
+`.env`. A key saved in the app is kept under the local data directory with
+owner-only file permissions; `OPENAI_API_KEY` takes precedence. Docker and
+headless deployments should use environment keys.
 
 Open [http://localhost:3000](http://localhost:3000). The interface asks only
 for an owner and repository name; it uses the container's `GITHUB_TOKEN` and

@@ -653,6 +653,7 @@ export default function Home() {
         </div>
 
         <div className="topbar-actions">
+          <Link className="btn btn-quiet btn-sm" href="/settings">AI settings</Link>
           {activeRepository && (
             <button className="btn btn-outline btn-sm" type="button" disabled={isBusy} onClick={() => void reindex()}>
               {isBusy ? "Checking…" : "Check now"}

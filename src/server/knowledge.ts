@@ -1,16 +1,23 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { promisify } from "node:util";
 import OpenAI from "openai";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { zodTextFormat } from "openai/helpers/zod";
 import { config } from "./config.js";
+import { claudeSubscriptionAvailable, codexSubscriptionAvailable, openAIApiKey } from "./ai.js";
 import { embedLocally } from "./local-embeddings.js";
 import { mutateState, readSnapshotIndex, readState, writeSnapshotIndex, type IndexChunk } from "./state.js";
 import { putText } from "./store.js";
 import { wikiRevisionKey } from "../lib/wiki-contracts.js";
 
-const client = config.OPENAI_API_KEY ? new OpenAI({ apiKey: config.OPENAI_API_KEY }) : undefined;
 type SourceChunk = { path: string; startLine: number; endLine: number; content: string };
 const fileTypes = new Set(["ts", "tsx", "js", "jsx", "py", "go", "rs", "md", "json", "yml", "yaml", "css", "html", "cjs", "mjs"]);
+const execFileAsync = promisify(execFile);
 
 export const isExcluded = (path: string) => /(^|\/)(node_modules|vendor|dist|build|coverage|\.git)\/|\.(png|jpe?g|gif|pdf|zip|lock)$/i.test(path) || /(^|\/)(\.env|.*secret.*|.*credential.*)$/i.test(path);
 
@@ -83,17 +90,71 @@ Rules:
 - If the evidence is insufficient, explain specifically what cannot be determined instead of guessing.
 - Prefer a direct, concise answer, followed by important details when useful.`;
 
+const pageSchema = {
+  type: "object", additionalProperties: false,
+  required: ["title", "slug", "summary", "markdown", "citedChunkIndexes"],
+  properties: {
+    title: { type: "string" }, slug: { type: "string" }, summary: { type: "string" }, markdown: { type: "string" },
+    citedChunkIndexes: { type: "array", items: { type: "integer", minimum: 0 } },
+  },
+};
+
+async function claude(prompt: string, schema?: Record<string, unknown>) {
+  let response: { text: string; structured?: unknown } | null = null;
+  for await (const message of query({
+    prompt,
+    options: { cwd: process.cwd(), executable: "bun", maxTurns: 1, tools: [], permissionMode: "dontAsk", ...(schema ? { outputFormat: { type: "json_schema", schema } } : {}) },
+  })) {
+    if (message.type === "result" && message.subtype === "success" && !message.is_error) {
+      response = { text: message.result, structured: message.structured_output };
+    }
+  }
+  if (!response) throw new Error("Claude Code did not return a response.");
+  return response;
+}
+
+async function codex(prompt: string, schema?: Record<string, unknown>) {
+  const directory = await mkdtemp(join(tmpdir(), "codewiki-codex-"));
+  const outputPath = join(directory, "result.txt");
+  const args = ["--sandbox", "read-only", "--ask-for-approval", "never", "exec", "--ephemeral", "--output-last-message", outputPath];
+  if (schema) {
+    const schemaPath = join(directory, "schema.json");
+    await writeFile(schemaPath, JSON.stringify(schema), "utf8");
+    args.push("--output-schema", schemaPath);
+  }
+  args.push(prompt);
+  try {
+    await execFileAsync("codex", args, { cwd: process.cwd(), timeout: 120_000, windowsHide: true, maxBuffer: 2_000_000 });
+    const output = await readFile(outputPath, "utf8");
+    return schema ? JSON.parse(output) : output;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function provider() {
+  if (await codexSubscriptionAvailable()) return "codex" as const;
+  if (await claudeSubscriptionAvailable()) return "claude" as const;
+  return await openAIApiKey() ? "openai" as const : null;
+}
+
 export async function authorOverview(repositoryId: string, snapshotId: string, allChunks: IndexChunk[]) {
   const chunks = allChunks.slice(0, 80);
   if (!chunks.length) return;
   const context = `<repository_evidence>\n${chunks.map((chunk, index) => `[${index}] ${chunk.path}:${chunk.startLine}-${chunk.endLine}\n${chunk.content}`).join("\n\n")}\n</repository_evidence>`;
   let page: z.infer<typeof Page>;
-  if (client) {
+  const selectedProvider = await provider();
+  if (selectedProvider === "codex") {
+    page = Page.parse(await codex(`${architectureAuthorInstructions}\n\n${context}`, pageSchema));
+  } else if (selectedProvider === "openai") {
+    const client = new OpenAI({ apiKey: await openAIApiKey() });
     const response = await client.responses.parse({ model: config.OPENAI_GENERATION_MODEL, input: [{ role: "system", content: architectureAuthorInstructions }, { role: "user", content: context }], text: { format: zodTextFormat(Page, "wiki_page") } });
     if (!response.output_parsed) throw new Error("The wiki author did not return a page.");
     page = response.output_parsed;
+  } else if (selectedProvider === "claude") {
+    page = Page.parse((await claude(`${architectureAuthorInstructions}\n\n${context}`, pageSchema)).structured);
   } else {
-    page = { title: "Architecture overview", slug: "architecture-overview", summary: "Generated from the indexed repository.", markdown: "## Indexed repository\n\nAdd `OPENAI_API_KEY` to generate narrative documentation.", citedChunkIndexes: chunks.slice(0, 3).map((_, index) => index) };
+    page = { title: "Architecture overview", slug: "architecture-overview", summary: "Generated from the indexed repository.", markdown: "## Indexed repository\n\nConnect Claude Code or add an OpenAI API key to generate narrative documentation.", citedChunkIndexes: chunks.slice(0, 3).map((_, index) => index) };
   }
 
   const revisionId = crypto.randomUUID();
@@ -147,6 +208,13 @@ export async function answerQuestion(repositoryId: string, question: string) {
 
   const evidence = rows.map((row, index) => `[${index}] ${row.path}:${row.startLine}-${row.endLine}\n${row.content}`).join("\n\n");
   const prompt = `<question>\n${question}\n</question>\n\n<repository_evidence>\n${evidence}\n</repository_evidence>`;
-  const answer = client ? (await client.responses.create({ model: config.OPENAI_GENERATION_MODEL, input: [{ role: "system", content: groundedAnswerInstructions }, { role: "user", content: prompt }] })).output_text : `Indexed evidence found for: ${question}`;
+  const selectedProvider = await provider();
+  const answer = selectedProvider === "codex"
+    ? await codex(`${groundedAnswerInstructions}\n\n${prompt}`)
+    : selectedProvider === "claude"
+    ? (await claude(`${groundedAnswerInstructions}\n\n${prompt}`)).text
+    : selectedProvider === "openai"
+      ? (await new OpenAI({ apiKey: await openAIApiKey() }).responses.create({ model: config.OPENAI_GENERATION_MODEL, input: [{ role: "system", content: groundedAnswerInstructions }, { role: "user", content: prompt }] })).output_text
+      : `Indexed evidence found for: ${question}`;
   return { answer, citations: rows.map((row) => ({ path: row.path, startLine: row.startLine, endLine: row.endLine, chunkId: row.id })) };
 }

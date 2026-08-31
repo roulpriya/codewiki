@@ -161,6 +161,7 @@ export default function DiscoverRepositories() {
           />
         </div>
         <div className="topbar-actions">
+          <Link className="btn btn-quiet btn-sm" href="/settings">AI settings</Link>
           <Link className="btn btn-outline btn-sm" href="/">
             Back to wiki
           </Link>
