@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { z } from "zod";
 import { zodTextFormat } from "openai/helpers/zod";
 import { config } from "./config.js";
+import { embedLocally } from "./local-embeddings.js";
 import { mutateState, readSnapshotIndex, readState, writeSnapshotIndex, type IndexChunk } from "./state.js";
 import { putText } from "./store.js";
 import { wikiRevisionKey } from "../lib/wiki-contracts.js";
@@ -22,10 +23,16 @@ export function splitFile(path: string, content: string): SourceChunk[] {
   return chunks.filter((chunk) => chunk.content.trim());
 }
 
+export function embeddingProfile() {
+  return `local:${config.LOCAL_EMBEDDING_MODEL}:q8:mean-normalized`;
+}
+
+export function hasCurrentEmbeddings(index: { embeddingProfile: string }) {
+  return index.embeddingProfile === embeddingProfile();
+}
+
 async function embeddings(inputs: string[]) {
-  if (!client) return inputs.map(() => null);
-  const response = await client.embeddings.create({ model: config.OPENAI_EMBEDDING_MODEL, input: inputs });
-  return response.data.map((item) => item.embedding);
+  return embedLocally(inputs);
 }
 
 export async function indexSnapshot(repositoryId: string, snapshotId: string, sha: string, files: Array<{ path: string; sha: string; content: string }>) {
@@ -38,7 +45,7 @@ export async function indexSnapshot(repositoryId: string, snapshotId: string, sh
     contentHash: createHash("sha256").update(chunk.content).digest("hex"),
     embedding: vectors[index],
   }));
-  const snapshotIndex = { repositoryId, snapshotId, sha, chunks };
+  const snapshotIndex = { repositoryId, snapshotId, sha, embeddingProfile: embeddingProfile(), chunks };
   await writeSnapshotIndex(snapshotIndex);
   return snapshotIndex;
 }

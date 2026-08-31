@@ -1,6 +1,6 @@
 import { config } from "./config.js";
 import { readRepositoryHead, snapshotRepository } from "./github.js";
-import { authorOverview, indexSnapshot } from "./knowledge.js";
+import { authorOverview, hasCurrentEmbeddings, indexSnapshot } from "./knowledge.js";
 import { mutateState, readSnapshotIndex, readState } from "./state.js";
 import { putJson } from "./store.js";
 import { rawImportKey, type IndexJob } from "../lib/wiki-contracts.js";
@@ -32,13 +32,15 @@ async function processJob(job: IndexJob) {
     const checkedAt = new Date().toISOString();
     if (repository.indexed_sha === head.sha) {
       const existingIndex = await readSnapshotIndex(repository.id, head.sha);
-      await mutateState((state) => {
-        const current = state.repositories.find((item) => item.id === repository.id);
-        if (current) { current.status = "ready"; current.last_checked_at = checkedAt; }
-        const run = state.syncRuns.find((item) => item.id === runId);
-        if (run) { run.status = "completed"; run.detail = { changed: false, chunkCount: existingIndex?.chunks.length ?? 0, sha: head.sha }; run.finished_at = checkedAt; }
-      });
-      return;
+      if (existingIndex && hasCurrentEmbeddings(existingIndex)) {
+        await mutateState((state) => {
+          const current = state.repositories.find((item) => item.id === repository.id);
+          if (current) { current.status = "ready"; current.last_checked_at = checkedAt; }
+          const run = state.syncRuns.find((item) => item.id === runId);
+          if (run) { run.status = "completed"; run.detail = { changed: false, chunkCount: existingIndex.chunks.length, sha: head.sha }; run.finished_at = checkedAt; }
+        });
+        return;
+      }
     }
 
     await mutateState((state) => {
@@ -61,7 +63,7 @@ async function processJob(job: IndexJob) {
     });
 
     let index = await readSnapshotIndex(repository.id, snapshot.sha);
-    if (!index) index = await indexSnapshot(repository.id, snapshotRecord.id, snapshot.sha, snapshot.files);
+    if (!index || !hasCurrentEmbeddings(index)) index = await indexSnapshot(repository.id, snapshotRecord.id, snapshot.sha, snapshot.files);
     const alreadyAuthored = (await readState()).wikiRevisions.some((revision) => revision.snapshot_id === snapshotRecord.id);
     if (!alreadyAuthored) await authorOverview(repository.id, snapshotRecord.id, index.chunks);
 

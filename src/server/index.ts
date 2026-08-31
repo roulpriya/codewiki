@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import { z } from "zod";
 import { config } from "./config.js";
-import { listAccessibleRepositories, readRepository, readViewer } from "./github.js";
+import { githubAuthStatus, listAccessibleRepositories, readRepository, readViewer, startGitHubCliLogin } from "./github.js";
 import { enqueue, enqueueAll, resumeInterruptedJobs, startNightlyScheduler } from "./jobs.js";
 import { answerQuestion } from "./knowledge.js";
 import { getText } from "./store.js";
@@ -16,6 +16,16 @@ const repositoryId = (value: string) => z.string().uuid().parse(value);
 app.get("/health", async () => ({ ok: true, mode: "local-filesystem" }));
 
 app.get("/repositories", async () => (await readState()).repositories.sort((left, right) => right.created_at.localeCompare(left.created_at)));
+
+app.get("/github/auth", async () => githubAuthStatus());
+
+app.post("/github/auth/login", async (_request, reply) => {
+  try {
+    return reply.code(202).send(await startGitHubCliLogin());
+  } catch (error) {
+    return reply.code(503).send({ error: error instanceof Error ? error.message : "GitHub sign-in could not be started." });
+  }
+});
 
 app.get("/github/repositories", async () => {
   const [viewer, repositories, state] = await Promise.all([readViewer(), listAccessibleRepositories(), readState()]);

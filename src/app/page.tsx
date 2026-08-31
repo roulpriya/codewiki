@@ -206,7 +206,7 @@ export default function Home() {
 
   const [loadError, setLoadError] = useState("");
 
-  const askField = useRef<HTMLInputElement>(null);
+  const askField = useRef<HTMLTextAreaElement>(null);
   const paletteField = useRef<HTMLInputElement>(null);
   const logEnd = useRef<HTMLDivElement>(null);
 
@@ -498,7 +498,6 @@ export default function Home() {
       const trimmed = question.trim();
       if (!trimmed || isAnswering) return;
 
-      setAskOpen(true);
       setAskInput("");
       setChat((current) => [...current, { id: `q-${Date.now()}`, who: "You", text: trimmed, cites: [] }]);
       setIsAnswering(true);
@@ -541,6 +540,11 @@ export default function Home() {
     },
     [activeRepository, isAnswering],
   );
+
+  const prefillAsk = useCallback((prompt: string) => {
+    setAskInput(prompt);
+    window.requestAnimationFrame(() => askField.current?.focus());
+  }, []);
 
   /* ── search ───────────────────────────────────────────────────── */
 
@@ -655,8 +659,8 @@ export default function Home() {
             </button>
           )}
           {activeRepository && (
-            <button className="btn btn-accent btn-sm" type="button" disabled={!canAsk} onClick={() => setAskOpen(true)}>
-              Ask
+            <button className="btn btn-accent btn-sm" type="button" disabled={!canAsk} onClick={() => setAskOpen((open) => !open)}>
+              {askOpen ? "View wiki" : "Ask"}
             </button>
           )}
         </div>
@@ -712,8 +716,95 @@ export default function Home() {
             )}
           </aside>
 
-          <main className="wiki-main">
-            {page ? (
+          <main className={`wiki-main ${askOpen ? "wiki-main-ask" : ""}`}>
+            {askOpen ? (
+              <section className="ask-workspace" aria-labelledby="ask-workspace-title">
+                <div className="ask-workspace-heading">
+                  <p className="eyebrow">Ask {activeRepository?.owner}/{activeRepository?.name}</p>
+                  <h1 className="doc-title" id="ask-workspace-title">What would you like to know?</h1>
+                  <p className="doc-lede">Ask anything across this repository. Every answer is grounded in the indexed source.</p>
+                </div>
+
+                <form
+                  className="ask-composer"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void ask(askInput);
+                  }}
+                >
+                  <label className="sr-only" htmlFor="workspace-ask">Ask a question</label>
+                  <textarea
+                    className="ask-composer-input"
+                    id="workspace-ask"
+                    ref={askField}
+                    rows={5}
+                    placeholder="Ask anything about this codebase…"
+                    value={askInput}
+                    disabled={!canAsk || isAnswering}
+                    onChange={(event) => setAskInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                        event.preventDefault();
+                        void ask(askInput);
+                      }
+                    }}
+                  />
+                  <div className="ask-composer-footer">
+                    <span>⌘↵ to ask</span>
+                    <button className="ask-send" type="submit" disabled={!canAsk || isAnswering || !askInput.trim()} aria-label="Ask question">
+                      ↑
+                    </button>
+                  </div>
+                </form>
+
+                {chat.length > 0 && (
+                  <section className="ask-results" aria-label="Conversation">
+                    {chat.map((message) => (
+                      <div className="ask-result" key={message.id}>
+                        <span className="msg-who">{message.who}</span>
+                        <span className={`msg-text ${message.who === "You" ? "is-you" : ""} ${message.failed ? "is-error" : ""}`}>
+                          {message.text}
+                        </span>
+                        {message.cites.length > 0 && (
+                          <span className="msg-cites">
+                            {message.cites.map((citation) => (
+                              <a className="msg-cite" key={`${message.id}-${citation.path}-${citation.start_line}`} href={sourceUrl(activeRepository, citation)} target="_blank" rel="noreferrer">
+                                {citation.path}:{citation.start_line}–{citation.end_line}
+                              </a>
+                            ))}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                    {isAnswering && <p className="ask-thinking">Reading the indexed source…</p>}
+                    <div ref={logEnd} />
+                  </section>
+                )}
+
+                {chat.length === 0 && (
+                  <>
+                    <div className="ask-suggestions">
+                      {STARTERS.map((prompt) => (
+                        <button className="chip" key={prompt} type="button" disabled={!canAsk} onClick={() => prefillAsk(prompt)}>
+                          {prompt}
+                        </button>
+                      ))}
+                    </div>
+                    <section className="recent-pages" aria-labelledby="recent-pages-title">
+                      <h2 className="recent-pages-title" id="recent-pages-title">Newest articles</h2>
+                      <div className="recent-page-grid">
+                        {pages.slice(0, 6).map((summary) => (
+                          <button className="recent-page" key={summary.id} type="button" onClick={() => { setActiveSlug(summary.slug); setActiveSectionId("overview"); setAskOpen(false); }}>
+                            <span className="recent-page-title">{summary.title}</span>
+                            <span className="recent-page-summary">{summary.summary ?? "Open this generated wiki page."}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  </>
+                )}
+              </section>
+            ) : page ? (
               activeSection ? (
                 <>
                   <button className="back-link" type="button" onClick={() => setActiveSectionId("overview")}>
@@ -819,7 +910,7 @@ export default function Home() {
               </>
             )}
 
-            {citations.length > 0 && (
+            {!askOpen && citations.length > 0 && (
               <div className="sources" id="sources">
                 <span className="sources-label">Sources</span>
                 {citations.map((citation, index) => (
@@ -912,98 +1003,6 @@ export default function Home() {
             )}
           </div>
         </main>
-      )}
-
-      {askOpen && activeRepository && (
-        <div className="scrim">
-          <button
-            className="scrim-dismiss"
-            type="button"
-            aria-label="Close ask panel"
-            onClick={() => setAskOpen(false)}
-          />
-          <aside className="drawer" role="dialog" aria-modal="true" aria-label="Ask this repository">
-            <div className="drawer-head">
-              <span className="drawer-head-text">
-                <span className="drawer-title">Ask this repository</span>
-                <span className="drawer-sub">
-                  {activeRepository.owner}/{activeRepository.name}
-                </span>
-              </span>
-              <button className="btn btn-quiet btn-sm" type="button" onClick={() => setAskOpen(false)}>
-                Close
-              </button>
-            </div>
-
-            <div className="drawer-log">
-              {chat.length === 0 && !isAnswering && (
-                <p className="drawer-empty">
-                  Ask anything about this codebase. Answers are drawn from the current index and cite the file and line
-                  they came from.
-                </p>
-              )}
-              {chat.map((message) => (
-                <div className="msg" key={message.id}>
-                  <span className="msg-who">{message.who}</span>
-                  <span
-                    className={`msg-text ${message.who === "You" ? "is-you" : ""} ${message.failed ? "is-error" : ""}`}
-                  >
-                    {message.text}
-                  </span>
-                  {message.cites.length > 0 && (
-                    <span className="msg-cites">
-                      {message.cites.map((citation) => (
-                        <a
-                          className="msg-cite"
-                          key={`${message.id}-${citation.path}-${citation.start_line}`}
-                          href={sourceUrl(activeRepository, citation)}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {citation.path}:{citation.start_line}–{citation.end_line}
-                        </a>
-                      ))}
-                    </span>
-                  )}
-                </div>
-              ))}
-              {isAnswering && (
-                <div className="msg">
-                  <span className="msg-who">Codewiki</span>
-                  <span className="msg-text">
-                    Reading {activeRepository.owner}/{activeRepository.name}…
-                  </span>
-                </div>
-              )}
-              <div ref={logEnd} />
-            </div>
-
-            <form
-              className="drawer-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void ask(askInput);
-              }}
-            >
-              <label className="sr-only" htmlFor="drawer-ask">
-                Ask a question
-              </label>
-              <input
-                className="input"
-                id="drawer-ask"
-                ref={askField}
-                type="text"
-                placeholder="Ask a question"
-                value={askInput}
-                disabled={!canAsk || isAnswering}
-                onChange={(event) => setAskInput(event.target.value)}
-              />
-              <button className="btn btn-accent" type="submit" disabled={!canAsk || isAnswering || !askInput.trim()}>
-                Ask
-              </button>
-            </form>
-          </aside>
-        </div>
       )}
 
       {searchOpen && (

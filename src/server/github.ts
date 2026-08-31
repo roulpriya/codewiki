@@ -1,4 +1,6 @@
 import { config } from "./config.js";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 
 type GitHubFile = { path: string; sha: string; content: string };
 export type GitHubViewer = { login: string; name: string | null; avatarUrl: string; htmlUrl: string };
@@ -19,9 +21,75 @@ export type AccessibleRepository = {
 };
 const api = "https://api.github.com";
 const excluded = /(^|\/)(node_modules|vendor|dist|build|coverage|\.git)\/|\.(png|jpe?g|gif|pdf|zip|lock)$/i;
+const execFileAsync = promisify(execFile);
+
+export type GitHubAuthStatus = {
+  authenticated: boolean;
+  source: "environment" | "gh" | null;
+  message: string;
+};
+
+let cachedGhToken: { value: string; expiresAt: number } | null = null;
+let loginInProgress = false;
+
+async function readGhToken(): Promise<string | null> {
+  if (cachedGhToken && cachedGhToken.expiresAt > Date.now()) return cachedGhToken.value;
+  try {
+    const { stdout } = await execFileAsync("gh", ["auth", "token", "--hostname", "github.com"], {
+      timeout: 5_000,
+      windowsHide: true,
+    });
+    const token = stdout.trim();
+    if (!token) return null;
+    cachedGhToken = { value: token, expiresAt: Date.now() + 60_000 };
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+async function accessToken(): Promise<{ token: string; source: "environment" | "gh" }> {
+  if (config.GITHUB_TOKEN) return { token: config.GITHUB_TOKEN, source: "environment" };
+  const token = await readGhToken();
+  if (token) return { token, source: "gh" };
+  throw new Error("GitHub is not connected. Set GITHUB_TOKEN or sign in with `gh auth login`.");
+}
+
+export async function githubAuthStatus(): Promise<GitHubAuthStatus> {
+  if (config.GITHUB_TOKEN) return { authenticated: true, source: "environment", message: "Using GITHUB_TOKEN." };
+  if (await readGhToken()) return { authenticated: true, source: "gh", message: "Using your GitHub CLI session." };
+  return { authenticated: false, source: null, message: "Sign in with GitHub CLI to browse repositories." };
+}
+
+export async function startGitHubCliLogin() {
+  if (config.GITHUB_TOKEN) return { started: false, message: "GITHUB_TOKEN is already configured." };
+  if (await readGhToken()) return { started: false, message: "GitHub CLI is already connected." };
+  if (loginInProgress) return { started: false, message: "GitHub CLI sign-in is already open in your browser." };
+  try {
+    await execFileAsync("gh", ["--version"], { timeout: 5_000, windowsHide: true });
+    const child = spawn("gh", ["auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "https"], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.unref();
+    loginInProgress = true;
+    child.once("exit", () => {
+      cachedGhToken = null;
+      loginInProgress = false;
+    });
+    child.once("error", () => {
+      loginInProgress = false;
+    });
+    return { started: true, message: "GitHub CLI opened a browser window for sign-in." };
+  } catch {
+    throw new Error("GitHub CLI is not installed. Install it from https://cli.github.com/, then run `gh auth login`.");
+  }
+}
 
 async function request<T>(path: string): Promise<T> {
-  const response = await fetch(`${api}${path}`, { headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${config.GITHUB_TOKEN}`, "X-GitHub-Api-Version": "2022-11-28" } });
+  const { token } = await accessToken();
+  const response = await fetch(`${api}${path}`, { headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28" } });
   if (!response.ok) throw new Error(`GitHub request failed (${response.status}): ${await response.text()}`);
   return response.json() as Promise<T>;
 }

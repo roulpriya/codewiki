@@ -23,6 +23,7 @@ type Repository = {
   importStatus: "idle" | "queued" | "checking" | "running" | "ready" | "failed" | null;
 };
 type Discovery = { viewer: Viewer; repositories: Repository[] };
+type AuthStatus = { authenticated: boolean; source: "environment" | "gh" | null; message: string };
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, init);
@@ -53,9 +54,18 @@ export default function DiscoverRepositories() {
   const [visibility, setVisibility] = useState<"all" | "public" | "private">("all");
   const [error, setError] = useState("");
   const [importing, setImporting] = useState<string | null>(null);
+  const [auth, setAuth] = useState<AuthStatus | null>(null);
+  const [connecting, setConnecting] = useState(false);
 
   async function load() {
     try {
+      const status = await requestJson<AuthStatus>("/github/auth");
+      setAuth(status);
+      if (status.authenticated) setConnecting(false);
+      if (!status.authenticated) {
+        setDiscovery(null);
+        return;
+      }
       setDiscovery(await requestJson<Discovery>("/github/repositories"));
       setError("");
     } catch (loadError) {
@@ -67,6 +77,24 @@ export default function DiscoverRepositories() {
     const timeout = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timeout);
   }, []);
+
+  useEffect(() => {
+    if (!connecting) return;
+    const interval = window.setInterval(() => void load(), 2_000);
+    return () => window.clearInterval(interval);
+  }, [connecting]);
+
+  async function connectGitHub() {
+    setConnecting(true);
+    setError("");
+    try {
+      const result = await requestJson<{ message: string }>("/github/auth/login", { method: "POST" });
+      setError(result.message);
+    } catch (connectError) {
+      setConnecting(false);
+      setError(connectError instanceof Error ? connectError.message : "GitHub sign-in could not be started.");
+    }
+  }
 
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -151,9 +179,20 @@ export default function DiscoverRepositories() {
       <main className="page">
         <h1 className="page-title">Choose what Codewiki should understand</h1>
         <p className="page-lede">
-          Every repository your configured access token can read. Adding one builds a local, source-cited wiki and keeps
+          Every repository your GitHub connection can read. Adding one builds a local, source-cited wiki and keeps
           it synced with the default branch.
         </p>
+
+        {auth && !auth.authenticated && (
+          <section className="empty" aria-live="polite">
+            <h2>Connect GitHub to browse your repositories</h2>
+            <p className="empty-note">{auth.message}</p>
+            <button className="btn btn-accent" type="button" disabled={connecting} onClick={() => void connectGitHub()}>
+              {connecting ? "Waiting for GitHub…" : "Sign in with GitHub"}
+            </button>
+            <p className="empty-note">This opens GitHub’s sign-in page through GitHub CLI. You can also run <code>gh auth login</code> in the terminal.</p>
+          </section>
+        )}
 
         {discovery?.viewer && (
           <a className="viewer" href={discovery.viewer.htmlUrl} target="_blank" rel="noreferrer">
@@ -168,7 +207,7 @@ export default function DiscoverRepositories() {
           </a>
         )}
 
-        <div className="repos-toolbar">
+        {auth?.authenticated && <div className="repos-toolbar">
           <span className="page-lede" style={{ margin: 0, flex: 1 }}>
             {discovery ? `${filtered.length} repositories` : "Loading repositories from GitHub…"}
           </span>
@@ -184,9 +223,9 @@ export default function DiscoverRepositories() {
               </button>
             ))}
           </div>
-        </div>
+        </div>}
 
-        <div className="rows">
+        {auth?.authenticated && <div className="rows">
           {filtered.map((repository) => (
             <div className="repo-row" key={repository.id}>
               <span className="repo-row-main">
@@ -234,7 +273,7 @@ export default function DiscoverRepositories() {
           {discovery && filtered.length === 0 && (
             <p className="empty-note">No repository matches that search or filter.</p>
           )}
-        </div>
+        </div>}
       </main>
     </>
   );

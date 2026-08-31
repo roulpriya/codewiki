@@ -9,12 +9,17 @@ is stored as an ordinary file beneath one data directory.
 
 Codewiki requires [Bun](https://bun.sh) 1.3.12 or newer for local development.
 
-Create a fine-grained GitHub personal access token with **Metadata: read** and
-**Contents: read** for the repositories you want to import. If an organization
-requires SSO, authorize the token for that organization.
+Codewiki automatically uses an existing [GitHub CLI](https://cli.github.com/)
+session when available. Run `gh auth login` once, then open **Discover
+repositories** and choose **Sign in with GitHub** if needed; the app launches
+the GitHub CLI browser flow and refreshes when it completes. For Docker or
+headless deployments, set `GITHUB_TOKEN` instead. Create a fine-grained token
+with **Metadata: read** and **Contents: read** for the repositories you want to
+import. If an organization requires SSO, authorize the token for that
+organization.
 
-Copy `.env.example` to `.env`, add the token (and optionally an OpenAI API key),
-then start Codewiki:
+Copy `.env.example` to `.env` if you are using a token (and optionally add an
+OpenAI API key for generated prose), then start Codewiki:
 
 ```sh
 docker compose up --build
@@ -67,6 +72,15 @@ bun run claude -- "Explain the repository architecture."
 
 The agent is limited to `Read`, `Glob`, and `Grep`, executes with Bun, and has
 its working directory set to this repository.
+
+## Code embeddings
+
+Codewiki runs Jina's `jinaai/jina-embeddings-v2-base-code` locally through
+Hugging Face Transformers.js and Bun—no embedding API key or Python runtime is
+required. The first run downloads the quantized ONNX model into the configured
+local cache. Existing repositories are automatically re-indexed after an
+embedding model change. OpenAI remains optional and is used only for authored
+wiki pages and grounded answer prose.
 
 ## Repository sync
 

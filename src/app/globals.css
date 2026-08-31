@@ -215,6 +215,7 @@ a:hover { color: var(--n-100); }
 .nav-sub.is-active { color: var(--n-200); }
 
 .wiki-main { min-width: 0; padding: 32px 40px 120px; max-width: 720px; }
+.wiki-main-ask { max-width: 1180px; width: 100%; }
 
 .doc-title {
   margin: 0 0 14px; font-size: 30px; font-weight: 500;
@@ -313,36 +314,47 @@ a:hover { color: var(--n-100); }
   border-radius: var(--radius-md);
 }
 
-/* ── ask drawer ──────────────────────────────────────────────────── */
+/* ── ask workspace ───────────────────────────────────────────────── */
 
-.scrim { position: fixed; inset: 0; z-index: 20; background: rgba(0, 0, 0, 0.4); }
-
-/* A real button carries the click-outside dismissal, so the backdrop stays
-   reachable by keyboard instead of being a div that only a mouse can use. */
-.scrim-dismiss { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; }
-.scrim-dismiss:focus-visible { outline-offset: -4px; }
-
-.drawer {
-  position: absolute; right: 0; top: 0; bottom: 0;
-  width: 420px; max-width: 94vw; padding: 24px;
-  display: flex; flex-direction: column;
-  background: var(--surface); border-left: 1px solid var(--line-strong);
+.ask-workspace { padding-top: 28px; }
+.ask-workspace-heading { margin-bottom: 34px; }
+.ask-workspace .doc-title { font-size: clamp(32px, 4vw, 46px); margin-bottom: 8px; }
+.ask-workspace .doc-lede { margin-bottom: 0; }
+.eyebrow, .recent-pages-title {
+  margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--a-400);
 }
-.drawer-head {
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: 16px; margin-bottom: 24px;
+.ask-composer {
+  display: flex; flex-direction: column; min-height: 210px; margin-bottom: 18px;
+  overflow: hidden; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-lg);
 }
-.drawer-head-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.drawer-title { font-size: 14.5px; font-weight: 500; color: var(--n-100); }
-.drawer-sub {
-  font-family: var(--font-mono); font-size: 12px; color: var(--n-600);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.ask-composer:focus-within { border-color: var(--a-600); }
+.ask-composer-input {
+  width: 100%; flex: 1; resize: vertical; padding: 22px; border: 0; outline: 0;
+  background: transparent; color: var(--n-100); font-size: 16px; line-height: 1.55; caret-color: var(--a-400);
 }
-.drawer-log {
-  flex: 1; min-height: 0; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 22px;
+.ask-composer-input::placeholder { color: var(--n-600); }
+.ask-composer-input:disabled { cursor: not-allowed; opacity: 0.55; }
+.ask-composer-footer { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 14px 22px; color: var(--n-600); font-size: 12px; }
+.ask-send {
+  display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 50%;
+  background: var(--a-600); color: white; font-size: 20px; line-height: 1; transition: background 120ms ease, opacity 120ms ease;
 }
-.drawer-empty { font-size: 13px; color: var(--n-600); text-wrap: pretty; }
+.ask-send:hover:not(:disabled) { background: var(--a-500); }
+.ask-send:disabled { opacity: 0.35; cursor: not-allowed; }
+.ask-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 44px; }
+.recent-pages { margin-top: 42px; }
+.recent-page-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.recent-page {
+  display: flex; min-height: 116px; flex-direction: column; gap: 7px; padding: 18px;
+  text-align: left; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-lg);
+}
+.recent-page:hover { border-color: var(--line-bright); background: var(--surface-raised); }
+.recent-page-title { color: var(--n-100); font-size: 14.5px; font-weight: 500; line-height: 1.4; }
+.recent-page-summary { display: -webkit-box; overflow: hidden; color: var(--n-500); font-size: 12.5px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.ask-results { display: flex; flex-direction: column; gap: 26px; padding-top: 22px; }
+.ask-result { display: flex; flex-direction: column; gap: 7px; max-width: 74ch; }
+.ask-thinking { margin: 0; color: var(--n-500); font-size: 13px; }
 .msg { display: flex; flex-direction: column; gap: 6px; }
 .msg-who { font-size: 12px; color: var(--n-600); }
 .msg-text { font-size: 13.5px; line-height: 1.55; color: var(--n-200); text-wrap: pretty; white-space: pre-wrap; }
@@ -353,10 +365,11 @@ a:hover { color: var(--n-100); }
   font-family: var(--font-mono); font-size: 12px; color: var(--n-500);
   border-bottom: 1px solid var(--line-bright); text-align: left;
 }
-.drawer-form { display: flex; gap: 8px; margin-top: 20px; }
-.drawer-form .input { padding: 8px 11px; font-size: 13.5px; background: var(--surface-input); border-color: var(--line-bright); }
-
 /* ── search palette ──────────────────────────────────────────────── */
+
+/* A real button carries click-outside dismissal for overlays. */
+.scrim-dismiss { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; }
+.scrim-dismiss:focus-visible { outline-offset: -4px; }
 
 .palette-scrim {
   position: fixed; inset: 0; z-index: 25; background: rgba(0, 0, 0, 0.45);
@@ -453,6 +466,7 @@ a:hover { color: var(--n-100); }
   .nav-item.is-active { padding-left: 0; border-left: none; border-bottom: 2px solid var(--a-500); }
   .nav-sub { margin-left: 0; }
   .wiki-main { padding: 28px 20px 100px; }
+  .wiki-main-ask { padding-top: 12px; }
 }
 
 @media (max-width: 720px) {
@@ -464,4 +478,6 @@ a:hover { color: var(--n-100); }
   .entry { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .repo-row { flex-wrap: wrap; gap: 10px 16px; }
   .repo-row-main { flex-basis: 100%; }
+  .recent-page-grid { grid-template-columns: minmax(0, 1fr); }
+  .ask-composer { min-height: 180px; }
 }

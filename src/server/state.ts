@@ -79,6 +79,7 @@ export type SnapshotIndex = {
   repositoryId: string;
   snapshotId: string;
   sha: string;
+  embeddingProfile: string;
   chunks: IndexChunk[];
 };
 
