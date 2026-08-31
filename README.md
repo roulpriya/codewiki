@@ -9,6 +9,24 @@ is stored as an ordinary file beneath one data directory.
 
 Codewiki requires [Bun](https://bun.sh) 1.3.12 or newer for local development.
 
+### npm CLI
+
+Install the CLI globally (or replace `codewiki` with `npx @roulpriya/codewiki`)
+and start the application:
+
+```sh
+npm install -g @roulpriya/codewiki
+codewiki start
+```
+
+Open [http://localhost:3000](http://localhost:3000). The CLI stores data in a
+per-user application-data directory by default. Set `DATA_DIR` to use a
+specific location. `codewiki start` runs in the background; use `codewiki
+status`, `codewiki logs`, `codewiki stop`, and `codewiki restart` to manage it.
+`codewiki mcp` starts the daemon when needed and exposes the stdio MCP server
+for an MCP client. Bun 1.3.12 or newer remains required because Codewiki runs
+its local services with Bun.
+
 Codewiki automatically uses an existing [GitHub CLI](https://cli.github.com/)
 session when available. Run `gh auth login` once, then open **Discover
 repositories** and choose **Sign in with GitHub** if needed; the app launches
@@ -96,11 +114,12 @@ interface to run the same check manually.
 ## Local MCP server
 
 Codewiki includes a local `stdio` MCP server that exposes repository discovery,
-status, overview, grounded Q&A, import, and update-check tools. Keep the
-Codewiki application running, then start the MCP server with:
+status, overview, grounded Q&A, import, and update-check tools. The CLI starts
+the Codewiki daemon automatically if it is not already running, then starts
+the MCP server with:
 
 ```sh
-CODEWIKI_API_ORIGIN=http://127.0.0.1:3000/api bun run mcp
+codewiki mcp
 ```
 
 The available tools are `list_repositories`, `discover_repositories`,
@@ -108,21 +127,18 @@ The available tools are `list_repositories`, `discover_repositories`,
 `import_repository`, and `check_repository`. Read-only tools are annotated
 separately from operations that import or synchronize local data.
 
-To register the local server with Codex, use the absolute project path and the
-port where Codewiki is running:
+To register the installed local server with Codex:
 
 ```sh
 codex mcp add codewiki \
-  --env CODEWIKI_API_ORIGIN=http://127.0.0.1:3000/api \
-  -- bun --cwd /absolute/path/to/code-wiki run mcp
+  -- codewiki mcp
 ```
 
 Register it with Claude Code at user scope so it is available across projects:
 
 ```sh
 claude mcp add --scope user codewiki \
-  -e CODEWIKI_API_ORIGIN=http://127.0.0.1:3000/api \
-  -- bun --cwd /absolute/path/to/code-wiki run mcp
+  -- codewiki mcp
 ```
 
 Keep the Codewiki application running while either client uses the MCP server.
@@ -140,6 +156,5 @@ codex mcp get codewiki
 claude mcp get codewiki
 ```
 
-If the application uses a different port, change `CODEWIKI_API_ORIGIN`. For
-example, the current local test instance on port `3100` uses
-`http://127.0.0.1:3100/api`.
+For source checkout development rather than a global installation, replace
+`codewiki mcp` with `bun run mcp` and keep the application running separately.
