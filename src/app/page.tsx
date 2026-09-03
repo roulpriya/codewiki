@@ -540,11 +540,6 @@ export default function Home() {
     [activeRepository, isAnswering],
   );
 
-  const prefillAsk = useCallback((prompt: string) => {
-    setAskInput(prompt);
-    window.requestAnimationFrame(() => askField.current?.focus());
-  }, []);
-
   /* ── search ───────────────────────────────────────────────────── */
 
   type Hit = { id: string; title: string; path: string; go: () => void };
@@ -785,7 +780,7 @@ export default function Home() {
                   <>
                     <div className="ask-suggestions">
                       {STARTERS.map((prompt) => (
-                        <button className="chip" key={prompt} type="button" disabled={!canAsk} onClick={() => prefillAsk(prompt)}>
+                        <button className="chip" key={prompt} type="button" disabled={!canAsk || isAnswering} onClick={() => void ask(prompt)}>
                           {prompt}
                         </button>
                       ))}
@@ -837,7 +832,10 @@ export default function Home() {
                       disabled={!canAsk}
                       onChange={(event) => setAskInput(event.target.value)}
                       onKeyDown={(event) => {
-                        if (event.key === "Enter") void ask(askInput);
+                        if (event.key === "Enter") {
+                          setAskOpen(true);
+                          void ask(askInput);
+                        }
                       }}
                     />
                     <div className="ask-card-prompts">
@@ -847,7 +845,10 @@ export default function Home() {
                           key={prompt}
                           type="button"
                           disabled={!canAsk}
-                          onClick={() => void ask(prompt)}
+                          onClick={() => {
+                            setAskOpen(true);
+                            void ask(prompt);
+                          }}
                         >
                           {prompt}
                         </button>

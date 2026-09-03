@@ -38,8 +38,8 @@
   --warn: #dfb076;
   --err: #e08b87;
 
-  --font-body: var(--font-inter), Inter, system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-body: Inter, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
   --radius-sm: 4px;
   --radius-md: 8px;
@@ -347,7 +347,16 @@ a:hover { color: var(--n-100); }
 }
 .ask-send:hover:not(:disabled) { background: var(--a-500); }
 .ask-send:disabled { opacity: 0.35; cursor: not-allowed; }
-.ask-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 44px; }
+.ask-suggestions {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;
+  margin: 0 0 44px;
+}
+.ask-suggestions .chip {
+  display: flex; align-items: flex-start; width: 100%; min-height: 76px;
+  padding: 14px 16px; text-align: left; white-space: normal; line-height: 1.45;
+  background: var(--surface); border-color: var(--line-strong);
+}
+.ask-suggestions .chip:hover:not(:disabled) { border-color: var(--line-bright); background: var(--surface-raised); }
 .recent-pages { margin-top: 42px; }
 .recent-page-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .recent-page {
@@ -483,6 +492,6 @@ a:hover { color: var(--n-100); }
   .entry { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .repo-row { flex-wrap: wrap; gap: 10px 16px; }
   .repo-row-main { flex-basis: 100%; }
-  .recent-page-grid { grid-template-columns: minmax(0, 1fr); }
+  .recent-page-grid, .ask-suggestions { grid-template-columns: minmax(0, 1fr); }
   .ask-composer { min-height: 180px; }
 }

@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { promisify } from "node:util";
 import OpenAI from "openai";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
@@ -13,11 +11,11 @@ import { claudeSubscriptionAvailable, codexSubscriptionAvailable, openAIApiKey }
 import { embedLocally } from "./local-embeddings.js";
 import { mutateState, readSnapshotIndex, readState, writeSnapshotIndex, type IndexChunk } from "./state.js";
 import { putText } from "./store.js";
+import { execFileWithInput } from "./process.js";
 import { wikiRevisionKey } from "../lib/wiki-contracts.js";
 
 type SourceChunk = { path: string; startLine: number; endLine: number; content: string };
 const fileTypes = new Set(["ts", "tsx", "js", "jsx", "py", "go", "rs", "md", "json", "yml", "yaml", "css", "html", "cjs", "mjs"]);
-const execFileAsync = promisify(execFile);
 
 export const isExcluded = (path: string) => /(^|\/)(node_modules|vendor|dist|build|coverage|\.git)\/|\.(png|jpe?g|gif|pdf|zip|lock)$/i.test(path) || /(^|\/)(\.env|.*secret.*|.*credential.*)$/i.test(path);
 
@@ -129,9 +127,9 @@ async function codex(prompt: string, schema?: Record<string, unknown>) {
     await writeFile(schemaPath, JSON.stringify(schema), "utf8");
     args.push("--output-schema", schemaPath);
   }
-  args.push(prompt);
+  args.push("-");
   try {
-    await execFileAsync("codex", args, { cwd: process.cwd(), timeout: 120_000, windowsHide: true, maxBuffer: 2_000_000 });
+    await execFileWithInput("codex", args, prompt, { cwd: process.cwd(), encoding: "utf8", timeout: 120_000, windowsHide: true, maxBuffer: 2_000_000 });
     const output = await readFile(outputPath, "utf8");
     return schema ? JSON.parse(output) : output;
   } finally {
