@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 
 type Status = {
   activeProvider: "codex" | "claude" | "openai" | null;
@@ -59,9 +58,9 @@ export default function SettingsPage() {
 
   return <>
     <header className="topbar">
-      <Link className="topbar-brand" href="/">Codewiki</Link>
+      <a className="topbar-brand" href="/">Codewiki</a>
       <span className="crumb"><span className="crumb-sep">/</span><span className="crumb-repo">AI settings</span></span>
-      <div className="topbar-actions"><Link className="btn btn-outline btn-sm" href="/">Back to wiki</Link></div>
+      <div className="topbar-actions"><a className="btn btn-outline btn-sm" href="/">Back to wiki</a></div>
     </header>
     <main className="page settings-page">
       <h1 className="page-title">AI provider</h1>

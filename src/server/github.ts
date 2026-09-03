@@ -22,6 +22,8 @@ export type AccessibleRepository = {
 const api = "https://api.github.com";
 const excluded = /(^|\/)(node_modules|vendor|dist|build|coverage|\.git)\/|\.(png|jpe?g|gif|pdf|zip|lock)$/i;
 const execFileAsync = promisify(execFile);
+const blobConcurrency = 4;
+const blobRequestSpacingMs = 100;
 
 export type GitHubAuthStatus = {
   authenticated: boolean;
@@ -93,6 +95,21 @@ async function request<T>(path: string): Promise<T> {
   if (!response.ok) throw new Error(`GitHub request failed (${response.status}): ${await response.text()}`);
   return response.json() as Promise<T>;
 }
+
+async function mapWithConcurrency<T, R>(values: T[], limit: number, mapper: (value: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= values.length) return;
+      results[index] = await mapper(values[index]);
+      await new Promise((resolve) => setTimeout(resolve, blobRequestSpacingMs));
+    }
+  }));
+  return results;
+}
 export async function readRepository(owner: string, name: string) {
   return request<{ default_branch: string }>(`/repos/${owner}/${name}`);
 }
@@ -145,9 +162,9 @@ export async function snapshotRepository(owner: string, name: string, ref: strin
   const commit = await request<{ sha: string; commit: { tree: { sha: string } } }>(`/repos/${owner}/${name}/commits/${encodeURIComponent(ref)}`);
   const tree = await request<{ tree: Array<{ path: string; type: string; sha: string; size?: number }> }>(`/repos/${owner}/${name}/git/trees/${commit.commit.tree.sha}?recursive=1`);
   const candidates = tree.tree.filter((entry) => entry.type === "blob" && !excluded.test(entry.path) && (entry.size ?? 0) < 1_000_000).slice(0, 5000);
-  const files = await Promise.all(candidates.map(async (entry) => {
+  const files = await mapWithConcurrency(candidates, blobConcurrency, async (entry) => {
     const blob = await request<{ content: string; encoding: string }>(`/repos/${owner}/${name}/git/blobs/${entry.sha}`);
     return { path: entry.path, sha: entry.sha, content: Buffer.from(blob.content.replace(/\n/g, ""), blob.encoding as BufferEncoding).toString("utf8") };
-  }));
+  });
   return { sha: commit.sha, files };
 }

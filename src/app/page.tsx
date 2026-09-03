@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 
 type RepositoryStatus = "idle" | "queued" | "checking" | "running" | "ready" | "failed";
 
@@ -653,7 +652,7 @@ export default function Home() {
         </div>
 
         <div className="topbar-actions">
-          <Link className="btn btn-quiet btn-sm" href="/settings">AI settings</Link>
+          <a className="btn btn-quiet btn-sm" href="/settings">AI settings</a>
           {activeRepository && (
             <button className="btn btn-outline btn-sm" type="button" disabled={isBusy} onClick={() => void reindex()}>
               {isBusy ? "Checking…" : "Check now"}
@@ -938,7 +937,7 @@ export default function Home() {
           <h1 className="page-title">Your repositories</h1>
           <p className="page-lede">
             Anything your access token can read. Add one and Codewiki keeps its wiki current on its own.{" "}
-            <Link href="/discover">Browse them in detail →</Link>
+            <a href="/discover">Browse them in detail →</a>
           </p>
 
           <div className="repos-toolbar">

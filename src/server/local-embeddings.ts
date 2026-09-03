@@ -1,21 +1,35 @@
-import { env, FeatureExtractionPipeline, pipeline } from "@huggingface/transformers";
-import { config } from "./config.js";
+type WorkerResult = { id: string; vectors?: number[][]; error?: string };
 
-let extractor: Promise<FeatureExtractionPipeline> | undefined;
+let worker: Worker | undefined;
+let queued = Promise.resolve();
+const pending = new Map<string, { resolve: (vectors: number[][]) => void; reject: (error: Error) => void }>();
 
-async function getExtractor() {
-  env.cacheDir = config.LOCAL_EMBEDDING_CACHE_DIR;
-  extractor ??= pipeline("feature-extraction", config.LOCAL_EMBEDDING_MODEL, { dtype: "q8" });
-  return extractor;
+function embeddingWorker() {
+  if (worker) return worker;
+  worker = new Worker(new URL("./local-embeddings-worker.ts", import.meta.url), { type: "module" });
+  worker.onmessage = ({ data }: MessageEvent<WorkerResult>) => {
+    const request = pending.get(data.id);
+    if (!request) return;
+    pending.delete(data.id);
+    if (data.error) request.reject(new Error(data.error));
+    else request.resolve(data.vectors ?? []);
+  };
+  worker.onerror = (event) => {
+    const error = new Error(event.message || "Local embedding worker stopped unexpectedly.");
+    for (const request of pending.values()) request.reject(error);
+    pending.clear();
+    worker = undefined;
+  };
+  return worker;
 }
 
 export async function embedLocally(inputs: string[]) {
   if (!inputs.length) return [];
-  const model = await getExtractor();
-  const output = await model(inputs, { pooling: "mean", normalize: true });
-  const vectors = output.tolist() as number[][];
-  if (vectors.length !== inputs.length || vectors.some((vector) => vector.some((value) => !Number.isFinite(value)))) {
-    throw new Error("The local embedding model returned invalid vectors.");
-  }
-  return vectors;
+  const task = queued.then(() => new Promise<number[][]>((resolve, reject) => {
+    const id = crypto.randomUUID();
+    pending.set(id, { resolve, reject });
+    embeddingWorker().postMessage({ id, inputs });
+  }));
+  queued = task.then(() => undefined, () => undefined);
+  return task;
 }

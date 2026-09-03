@@ -106,7 +106,7 @@ export async function resumeInterruptedJobs() {
 
 export async function enqueueDueRepositories() {
   const intervalMs = config.SYNC_INTERVAL_HOURS * 60 * 60 * 1000;
-  const repositories = (await readState()).repositories.filter((repository) => !repository.last_checked_at || Date.now() - new Date(repository.last_checked_at).getTime() >= intervalMs);
+  const repositories = (await readState()).repositories.filter((repository) => repository.status === "ready" && (!repository.last_checked_at || Date.now() - new Date(repository.last_checked_at).getTime() >= intervalMs));
   await Promise.all(repositories.map((repository) => enqueue({ repositoryId: repository.id, targetSha: "default-branch", trigger: "nightly-reconcile", idempotencyKey: `scheduled:${repository.id}:${Date.now()}` })));
   return repositories.length;
 }

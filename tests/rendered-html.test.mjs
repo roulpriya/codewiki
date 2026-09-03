@@ -2,33 +2,21 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function render(pathname = "/") {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: handler } = await import(workerUrl.href);
-  return handler(new Request(`http://localhost${pathname}`, { headers: { accept: "text/html" } }));
-}
-
-test("server-renders the Codewiki product shell", async () => {
-  const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-  const html = await response.text();
-  assert.match(html, /<title>Codewiki — repository knowledge, kept current<\/title>/i);
-  assert.match(html, /<body[^>]*>/i);
-  assert.match(html, /_next\/static\/chunks\/page-/);
-  assert.doesNotMatch(html, /PR #184|Mei Kim|Knowledge health|acme\/platform/);
-  assert.match(html, /Your repository, explained\./);
-  assert.doesNotMatch(html, /Your site is taking shape|Building your site|codex-preview/i);
-});
-
-test("server-renders repository discovery as a separate page", async () => {
-  const response = await render("/discover");
-  assert.equal(response.status, 200);
-  const html = await response.text();
-  assert.match(html, /Choose what Codewiki should understand/i);
-  assert.match(html, /Search by name or description/i);
-  assert.match(html, /Back to wiki/i);
+test("builds a Bun-served React application", async () => {
+  const [client, css, server, home, discover] = await Promise.all([
+    readFile(new URL("../dist/web/client.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/web/client.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/web.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/discover/page.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(client, /createRoot/);
+  assert.match(home, /Your repositories/);
+  assert.match(discover, /Choose what Codewiki should understand/i);
+  assert.match(discover, /Search by name or description/i);
+  assert.match(css, /--bg:/);
+  assert.match(server, /Bun\.serve/);
+  assert.match(server, /handleApi/);
 });
 
 test("uses only local filesystem persistence", async () => {

@@ -39,7 +39,14 @@ export function hasCurrentEmbeddings(index: { embeddingProfile: string }) {
 }
 
 async function embeddings(inputs: string[]) {
-  return embedLocally(inputs);
+  const batchSize = 8;
+  const vectors: number[][] = [];
+  for (let offset = 0; offset < inputs.length; offset += batchSize) {
+    vectors.push(...await embedLocally(inputs.slice(offset, offset + batchSize)));
+    // Local ONNX inference runs on the server thread; yield so API requests stay responsive.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return vectors;
 }
 
 export async function indexSnapshot(repositoryId: string, snapshotId: string, sha: string, files: Array<{ path: string; sha: string; content: string }>) {

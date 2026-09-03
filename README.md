@@ -5,6 +5,10 @@ one local application or Docker image. GitHub access uses your personal access
 token, and every repository snapshot, search index, wiki revision, and sync run
 is stored as an ordinary file beneath one data directory.
 
+The local embedding model is cached separately at `.cache/huggingface` by
+default. It can be safely deleted and is never part of the application data or
+repository history.
+
 ## Run it
 
 Codewiki requires [Bun](https://bun.sh) 1.3.12 or newer for local development.
@@ -19,8 +23,8 @@ npm install -g @roulpriya/codewiki
 codewiki start
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The CLI stores data in a
-per-user application-data directory by default. Set `DATA_DIR` to use a
+Open [http://localhost:3000](http://localhost:3000). The CLI creates and uses
+`./data` in the directory where you run it by default. Set `DATA_DIR` to use a
 specific location. `codewiki start` runs in the background; use `codewiki
 status`, `codewiki logs`, `codewiki stop`, and `codewiki restart` to manage it.
 `codewiki mcp` starts the daemon when needed and exposes the stdio MCP server

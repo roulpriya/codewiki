@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import Image from "next/image";
 
 type Viewer = { login: string; name: string | null; avatarUrl: string; htmlUrl: string };
 type Repository = {
@@ -140,9 +138,9 @@ export default function DiscoverRepositories() {
   return (
     <>
       <header className="topbar">
-        <Link className="topbar-brand" href="/">
+        <a className="topbar-brand" href="/">
           Codewiki
-        </Link>
+        </a>
         <span className="crumb">
           <span className="crumb-sep">/</span>
           <span className="crumb-repo">discover</span>
@@ -161,10 +159,10 @@ export default function DiscoverRepositories() {
           />
         </div>
         <div className="topbar-actions">
-          <Link className="btn btn-quiet btn-sm" href="/settings">AI settings</Link>
-          <Link className="btn btn-outline btn-sm" href="/">
+          <a className="btn btn-quiet btn-sm" href="/settings">AI settings</a>
+          <a className="btn btn-outline btn-sm" href="/">
             Back to wiki
-          </Link>
+          </a>
         </div>
       </header>
 
@@ -197,7 +195,7 @@ export default function DiscoverRepositories() {
 
         {discovery?.viewer && (
           <a className="viewer" href={discovery.viewer.htmlUrl} target="_blank" rel="noreferrer">
-            <Image src={discovery.viewer.avatarUrl} width={36} height={36} unoptimized alt="" />
+            <img src={discovery.viewer.avatarUrl} width={36} height={36} alt="" />
             <span className="viewer-text">
               <span className="viewer-label">Connected as</span>
               <span className="viewer-name">
@@ -249,9 +247,9 @@ export default function DiscoverRepositories() {
                   >
                     {importCopy(repository.importStatus)}
                   </span>
-                  <Link className="btn btn-outline btn-sm" href={`/?repository=${repository.importedRepositoryId}`}>
+                  <a className="btn btn-outline btn-sm" href={`/?repository=${repository.importedRepositoryId}`}>
                     Open
-                  </Link>
+                  </a>
                 </>
               ) : (
                 <>

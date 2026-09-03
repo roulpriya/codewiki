@@ -1,6 +1,6 @@
-const result = Bun.spawnSync(["bunx", "vinext", "build"], {
+const result = Bun.spawnSync(["bun", "run", "build"], {
   cwd: import.meta.dir + "/..",
-  env: { ...process.env, API_ORIGIN: "http://127.0.0.1:3001" },
+  env: process.env,
   stdio: ["inherit", "inherit", "inherit"],
 });
 

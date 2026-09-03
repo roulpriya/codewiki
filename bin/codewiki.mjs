@@ -21,21 +21,20 @@ function printHelp() {
 Usage: codewiki <command> [options]
 
 Commands:
-  start [vinext options]  Start the production web app and API server as a daemon (default)
+  start [Bun options]     Start the production web app and API server as a daemon (default)
   stop                    Stop the local Codewiki daemon
-  restart [vinext options] Restart the local Codewiki daemon
+  restart [Bun options]   Restart the local Codewiki daemon
   status                  Show daemon status
   logs                    Print the daemon log
-  dev [vinext options]    Run the development web app and API server in the foreground
-  web [vinext options]    Run only the production web app
-  api                     Run only the API server
+  dev [Bun options]       Run the development web app and API server in the foreground
+  web [Bun options]       Run only the production web app
+  api                     Run the single web and API server
   mcp                     Ensure the daemon is running, then run the stdio MCP server
   build                   Build the production web app
   help                    Show this help
 
 Environment:
   DATA_DIR                Directory for local Codewiki data
-  API_PORT                API port (default: 3001)
   GITHUB_TOKEN            GitHub token for headless use
   OPENAI_API_KEY          OpenAI API key (optional)
 
@@ -43,15 +42,13 @@ Codewiki requires Bun 1.3.12 or later. See https://github.com/roulpriya/codewiki
 }
 
 function defaultDataDir() {
-  if (process.platform === "darwin") return join(process.env.HOME ?? packageRoot, "Library", "Application Support", "codewiki");
-  if (process.platform === "win32") return join(process.env.APPDATA ?? process.env.USERPROFILE ?? packageRoot, "codewiki");
-  return join(process.env.XDG_DATA_HOME ?? join(process.env.HOME ?? packageRoot, ".local", "share"), "codewiki");
+  return join(process.cwd(), "data");
 }
 
 function runtimeEnv() {
   const env = { ...process.env };
   env.DATA_DIR ??= defaultDataDir();
-  env.LOCAL_EMBEDDING_CACHE_DIR ??= join(env.DATA_DIR, "huggingface");
+  env.LOCAL_EMBEDDING_CACHE_DIR ??= join(process.cwd(), ".cache", "huggingface");
   return env;
 }
 
@@ -84,14 +81,13 @@ function removePid() {
 }
 
 function ensureProductionBuild() {
-  const serverBundle = join(packageRoot, "dist", "server", "index.js");
+  const clientBundle = join(packageRoot, "dist", "web", "client.js");
   const env = runtimeEnv();
-  const apiOrigin = env.API_ORIGIN ?? `http://127.0.0.1:${env.API_PORT ?? "3001"}`;
-  const needsBuild = !existsSync(serverBundle) || !readFileSync(serverBundle, "utf8").includes(apiOrigin);
+  const needsBuild = !existsSync(clientBundle);
   if (!needsBuild) return;
 
-  console.log(`Building Codewiki for API origin ${apiOrigin}...`);
-  const result = spawnSync("bun", ["x", "vinext", "build"], { cwd: packageRoot, env, stdio: "inherit" });
+  console.log("Building Codewiki...");
+  const result = spawnSync("bun", ["run", "build"], { cwd: packageRoot, env, stdio: "inherit" });
   if (result.error || result.status !== 0) {
     console.error("Codewiki production build failed.");
     process.exit(result.status ?? 1);
@@ -193,27 +189,25 @@ else if (command === "restart") {
     const contents = readFileSync(log, "utf8");
     process.stdout.write(contents.slice(-20_000));
   }
-} else if (command === "build") runBun(["x", "vinext", "build", ...args]);
-else if (command === "web") runBun(["x", "vinext", "start", ...args]);
-else if (command === "api") runBun(["run", "src/server/index.ts"]);
+} else if (command === "build") runBun(["run", "build", ...args]);
+else if (command === "web") runBun(["run", "start", ...args]);
+else if (command === "api") runBun(["run", "start"]);
 else if (command === "mcp") {
   startDaemon([], { quiet: true });
   runBun(["run", "src/mcp/server.ts"], { wait: true });
 }
 else {
-  const web = runBun(["x", "vinext", command === "dev" ? "dev" : "start", ...args], { wait: false });
-  const api = runBun(["run", "src/server/index.ts"], { wait: false });
+  const web = runBun(["run", command === "dev" ? "dev" : "start", ...args], { wait: false });
   let stopping = false;
   const stop = (code = 0) => {
     if (stopping) return;
     stopping = true;
     web.kill("SIGTERM");
-    api.kill("SIGTERM");
     process.exitCode = code;
   };
   process.on("SIGINT", () => stop());
   process.on("SIGTERM", () => stop());
-  for (const child of [web, api]) {
+  for (const child of [web]) {
     child.on("error", (error) => { console.error(error.message); stop(1); });
     child.on("exit", (code) => stop(code ?? 1));
   }
