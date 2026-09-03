@@ -40,3 +40,4 @@ yarn-error.log*
 /huggingface/
 /.cache/
 /data/
+tsconfig.tsbuildinfo
