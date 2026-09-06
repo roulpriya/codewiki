@@ -14,22 +14,14 @@ import { putText } from "./store.js";
 import { execFileWithInput } from "./process.js";
 import { wikiRevisionKey } from "../lib/wiki-contracts.js";
 
-type SourceChunk = { path: string; startLine: number; endLine: number; content: string };
+import { CHUNK_PROFILE, splitFile, retrieve, overviewEvidence } from "./retrieval.js";
+export { splitFile } from "./retrieval.js";
 const fileTypes = new Set(["ts", "tsx", "js", "jsx", "py", "go", "rs", "md", "json", "yml", "yaml", "css", "html", "cjs", "mjs"]);
 
 export const isExcluded = (path: string) => /(^|\/)(node_modules|vendor|dist|build|coverage|\.git)\/|\.(png|jpe?g|gif|pdf|zip|lock)$/i.test(path) || /(^|\/)(\.env|.*secret.*|.*credential.*)$/i.test(path);
 
-export function splitFile(path: string, content: string): SourceChunk[] {
-  const lines = content.split("\n");
-  const chunks: SourceChunk[] = [];
-  for (let offset = 0; offset < lines.length; offset += 80) {
-    chunks.push({ path, startLine: offset + 1, endLine: Math.min(offset + 80, lines.length), content: lines.slice(offset, offset + 80).join("\n") });
-  }
-  return chunks.filter((chunk) => chunk.content.trim());
-}
-
 export function embeddingProfile() {
-  return `local:${config.LOCAL_EMBEDDING_MODEL}:q8:mean-normalized`;
+  return `local:${config.LOCAL_EMBEDDING_MODEL}:q8:mean-normalized:${CHUNK_PROFILE}`;
 }
 
 export function hasCurrentEmbeddings(index: { embeddingProfile: string }) {
@@ -41,7 +33,7 @@ async function embeddings(inputs: string[]) {
   const vectors: number[][] = [];
   for (let offset = 0; offset < inputs.length; offset += batchSize) {
     vectors.push(...await embedLocally(inputs.slice(offset, offset + batchSize)));
-    // Local ONNX inference runs on the server thread; yield so API requests stay responsive.
+    // Yield between worker batches so other embedding requests can make progress.
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   return vectors;
@@ -51,11 +43,20 @@ export async function indexSnapshot(repositoryId: string, snapshotId: string, sh
   const sourceChunks = files
     .filter((file) => !isExcluded(file.path) && fileTypes.has(file.path.split(".").pop()?.toLowerCase() ?? ""))
     .flatMap((file) => splitFile(file.path, file.content));
-  const vectors = await embeddings(sourceChunks.map((chunk) => chunk.content));
-  const chunks: IndexChunk[] = sourceChunks.map((chunk, index) => ({
-    id: crypto.randomUUID(), ...chunk,
+  const repository = (await readState()).repositories.find((item) => item.id === repositoryId);
+  const previous = repository?.indexed_sha ? await readSnapshotIndex(repositoryId, repository.indexed_sha) : null;
+  const hash = (content: string) => createHash("sha256").update(content).digest("hex");
+  const cached = new Map<string, number[]>();
+  if (previous && hasCurrentEmbeddings(previous)) {
+    for (const chunk of previous.chunks) if (chunk.embedding?.length) cached.set(chunk.contentHash, chunk.embedding);
+  }
+  const missing = [...new Map(sourceChunks.filter((chunk) => !cached.has(hash(chunk.content))).map((chunk) => [hash(chunk.content), chunk.content])).entries()];
+  const generated = await embeddings(missing.map(([, content]) => content));
+  missing.forEach(([key], index) => cached.set(key, generated[index]));
+  const chunks: IndexChunk[] = sourceChunks.map((chunk) => ({
+    id: createHash("sha256").update(`${repositoryId}:${sha}:${chunk.path}:${chunk.startLine}:${chunk.content}`).digest("hex"), ...chunk,
     contentHash: createHash("sha256").update(chunk.content).digest("hex"),
-    embedding: vectors[index],
+    embedding: cached.get(hash(chunk.content)) ?? null,
   }));
   const snapshotIndex = { repositoryId, snapshotId, sha, embeddingProfile: embeddingProfile(), chunks };
   await writeSnapshotIndex(snapshotIndex);
@@ -93,7 +94,13 @@ Rules:
 - Clearly label an inference when it is not stated directly.
 - If evidence conflicts, describe the conflict and cite both sides.
 - If the evidence is insufficient, explain specifically what cannot be determined instead of guessing.
-- Prefer a direct, concise answer, followed by important details when useful.`;
+
+Structure the response as:
+- summary: a direct 1-3 sentence answer to the question.
+- sections: break supporting detail into a small number of focused sections (typically 1-4), each with a short descriptive heading and a Markdown body. Do not repeat the summary as a section. Omit a section that would only restate "insufficient evidence" with nothing else to say.
+- followups: 2-4 natural next questions a developer could ask about this repository, grounded in what the evidence covers. Return an empty array if none are relevant.
+
+Populate each section's citedChunkIndexes with exactly the unique evidence indexes cited in that section's Markdown.`;
 
 const pageSchema = {
   type: "object", additionalProperties: false,
@@ -104,11 +111,42 @@ const pageSchema = {
   },
 };
 
+const Answer = z.object({
+  summary: z.string(),
+  sections: z.array(z.object({
+    heading: z.string(),
+    markdown: z.string(),
+    citedChunkIndexes: z.array(z.number().int().nonnegative()),
+  })),
+  followups: z.array(z.string()),
+});
+
+const answerSchema = {
+  type: "object", additionalProperties: false,
+  required: ["summary", "sections", "followups"],
+  properties: {
+    summary: { type: "string" },
+    sections: {
+      type: "array",
+      items: {
+        type: "object", additionalProperties: false,
+        required: ["heading", "markdown", "citedChunkIndexes"],
+        properties: {
+          heading: { type: "string" },
+          markdown: { type: "string" },
+          citedChunkIndexes: { type: "array", items: { type: "integer", minimum: 0 } },
+        },
+      },
+    },
+    followups: { type: "array", items: { type: "string" } },
+  },
+};
+
 async function claude(prompt: string, schema?: Record<string, unknown>) {
   let response: { text: string; structured?: unknown } | null = null;
   for await (const message of query({
     prompt,
-    options: { cwd: process.cwd(), executable: "bun", maxTurns: 1, tools: [], permissionMode: "dontAsk", ...(schema ? { outputFormat: { type: "json_schema", schema } } : {}) },
+    options: { cwd: process.cwd(), executable: "bun", maxTurns: 3, tools: [], permissionMode: "dontAsk", ...(schema ? { outputFormat: { type: "json_schema", schema } } : {}) },
   })) {
     if (message.type === "result" && message.subtype === "success" && !message.is_error) {
       response = { text: message.result, structured: message.structured_output };
@@ -116,6 +154,16 @@ async function claude(prompt: string, schema?: Record<string, unknown>) {
   }
   if (!response) throw new Error("Claude Code did not return a response.");
   return response;
+}
+
+/** Codex's stderr includes its session banner and an echo of the full prompt; never surface it verbatim. */
+function summarizeCodexFailure(error: unknown): string {
+  const stderr = typeof (error as { stderr?: unknown })?.stderr === "string" ? (error as { stderr: string }).stderr : "";
+  const lines = stderr.split("\n").map((line) => line.trim()).filter(Boolean);
+  const errorLine = [...lines].reverse().find((line) => line.startsWith("ERROR:"));
+  if (errorLine) return errorLine;
+  if ((error as { signal?: string })?.signal === "SIGTERM") return "Codex timed out before answering.";
+  return "Codex could not answer the question.";
 }
 
 async function codex(prompt: string, schema?: Record<string, unknown>) {
@@ -129,7 +177,11 @@ async function codex(prompt: string, schema?: Record<string, unknown>) {
   }
   args.push("-");
   try {
-    await execFileWithInput("codex", args, prompt, { cwd: process.cwd(), encoding: "utf8", timeout: 120_000, windowsHide: true, maxBuffer: 2_000_000 });
+    try {
+      await execFileWithInput("codex", args, prompt, { cwd: process.cwd(), encoding: "utf8", timeout: 120_000, windowsHide: true, maxBuffer: 2_000_000 });
+    } catch (error) {
+      throw new Error(summarizeCodexFailure(error));
+    }
     const output = await readFile(outputPath, "utf8");
     return schema ? JSON.parse(output) : output;
   } finally {
@@ -138,13 +190,13 @@ async function codex(prompt: string, schema?: Record<string, unknown>) {
 }
 
 async function provider() {
-  if (await codexSubscriptionAvailable()) return "codex" as const;
   if (await claudeSubscriptionAvailable()) return "claude" as const;
+  if (await codexSubscriptionAvailable()) return "codex" as const;
   return await openAIApiKey() ? "openai" as const : null;
 }
 
 export async function authorOverview(repositoryId: string, snapshotId: string, allChunks: IndexChunk[]) {
-  const chunks = allChunks.slice(0, 80);
+  const chunks = overviewEvidence(allChunks);
   if (!chunks.length) return;
   const context = `<repository_evidence>\n${chunks.map((chunk, index) => `[${index}] ${chunk.path}:${chunk.startLine}-${chunk.endLine}\n${chunk.content}`).join("\n\n")}\n</repository_evidence>`;
   let page: z.infer<typeof Page>;
@@ -159,9 +211,13 @@ export async function authorOverview(repositoryId: string, snapshotId: string, a
   } else if (selectedProvider === "claude") {
     page = Page.parse((await claude(`${architectureAuthorInstructions}\n\n${context}`, pageSchema)).structured);
   } else {
-    page = { title: "Architecture overview", slug: "architecture-overview", summary: "Generated from the indexed repository.", markdown: "## Indexed repository\n\nConnect Claude Code or add an OpenAI API key to generate narrative documentation.", citedChunkIndexes: chunks.slice(0, 3).map((_, index) => index) };
+    page = { title: "Architecture overview", slug: "architecture-overview", summary: "Generated from the indexed repository.", markdown: "## Indexed repository\n\nConnect Claude Code or add an OpenAI API key to generate narrative documentation.", citedChunkIndexes: [] };
   }
 
+  const cited = [...new Set([...page.markdown.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1])))];
+  if (cited.some((index) => index >= chunks.length)) throw new Error("Generated overview contains an invalid source citation.");
+  page.citedChunkIndexes = cited;
+  page.slug = "architecture-overview";
   const revisionId = crypto.randomUUID();
   const objectKey = wikiRevisionKey(repositoryId, revisionId, page.slug);
   await putText(objectKey, `# ${page.title}\n\n${page.markdown}`);
@@ -176,50 +232,54 @@ export async function authorOverview(repositoryId: string, snapshotId: string, a
     state.wikiRevisions.push({ id: revisionId, page_id: wiki.id, snapshot_id: snapshotId, summary: page.summary, object_key: objectKey, created_at: new Date().toISOString() });
     wiki.current_revision_id = revisionId;
     for (const index of [...new Set(page.citedChunkIndexes)].filter((value) => value < chunks.length)) {
-      state.wikiCitations.push({ revision_id: revisionId, chunk_id: chunks[index].id });
+      state.wikiCitations.push({ revision_id: revisionId, chunk_id: chunks[index].id, evidence_index: index });
     }
   });
 }
 
-function cosineSimilarity(left: number[], right: number[]) {
-  let dot = 0; let leftNorm = 0; let rightNorm = 0;
-  const length = Math.min(left.length, right.length);
-  for (let index = 0; index < length; index++) {
-    dot += left[index] * right[index]; leftNorm += left[index] ** 2; rightNorm += right[index] ** 2;
-  }
-  return leftNorm && rightNorm ? dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm)) : 0;
-}
-
-function lexicalScore(content: string, terms: string[]) {
-  const normalized = content.toLowerCase();
-  return terms.length ? terms.filter((term) => normalized.includes(term)).length / terms.length : 0;
-}
+const emptyAnswer = (summary: string) => ({ summary, sections: [], followups: [], citations: [] });
 
 export async function answerQuestion(repositoryId: string, question: string) {
   const repository = (await readState()).repositories.find((item) => item.id === repositoryId);
-  if (!repository?.indexed_sha) return { answer: "This repository has not finished indexing.", citations: [] };
+  if (!repository?.indexed_sha) return emptyAnswer("This repository has not finished indexing.");
   const index = await readSnapshotIndex(repositoryId, repository.indexed_sha);
-  if (!index) return { answer: "I do not have enough indexed evidence to answer that question.", citations: [] };
+  if (!index) return emptyAnswer("I do not have enough indexed evidence to answer that question.");
 
-  const [queryVector] = await embeddings([question]);
-  const terms = [...new Set(question.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? [])];
-  const rows = index.chunks
-    .map((chunk) => ({ chunk, score: 0.35 * lexicalScore(chunk.content, terms) + (queryVector && chunk.embedding ? 0.65 * cosineSimilarity(queryVector, chunk.embedding) : 0) }))
-    .filter((row) => row.score > 0)
-    .sort((left, right) => right.score - left.score)
-    .slice(0, 8)
-    .map((row) => row.chunk);
-  if (!rows.length) return { answer: "I do not have enough indexed evidence to answer that question.", citations: [] };
+  let queryVector: number[] | undefined;
+  if (hasCurrentEmbeddings(index)) {
+    try { [queryVector] = await embeddings([question]); }
+    catch (error) { console.warn("Semantic search unavailable; using lexical retrieval.", error); }
+  }
+  const rows = retrieve(index.chunks, question, queryVector);
+  if (!rows.length) return emptyAnswer("I do not have enough indexed evidence to answer that question.");
 
   const evidence = rows.map((row, index) => `[${index}] ${row.path}:${row.startLine}-${row.endLine}\n${row.content}`).join("\n\n");
   const prompt = `<question>\n${question}\n</question>\n\n<repository_evidence>\n${evidence}\n</repository_evidence>`;
   const selectedProvider = await provider();
-  const answer = selectedProvider === "codex"
-    ? await codex(`${groundedAnswerInstructions}\n\n${prompt}`)
-    : selectedProvider === "claude"
-    ? (await claude(`${groundedAnswerInstructions}\n\n${prompt}`)).text
-    : selectedProvider === "openai"
-      ? (await new OpenAI({ apiKey: await openAIApiKey() }).responses.create({ model: config.OPENAI_GENERATION_MODEL, input: [{ role: "system", content: groundedAnswerInstructions }, { role: "user", content: prompt }] })).output_text
-      : `Indexed evidence found for: ${question}`;
-  return { answer, citations: rows.map((row) => ({ path: row.path, startLine: row.startLine, endLine: row.endLine, chunkId: row.id })) };
+  let page: z.infer<typeof Answer>;
+  if (selectedProvider === "codex") {
+    page = Answer.parse(await codex(`${groundedAnswerInstructions}\n\n${prompt}`, answerSchema));
+  } else if (selectedProvider === "claude") {
+    page = Answer.parse((await claude(`${groundedAnswerInstructions}\n\n${prompt}`, answerSchema)).structured);
+  } else if (selectedProvider === "openai") {
+    const response = await new OpenAI({ apiKey: await openAIApiKey() }).responses.parse({ model: config.OPENAI_GENERATION_MODEL, input: [{ role: "system", content: groundedAnswerInstructions }, { role: "user", content: prompt }], text: { format: zodTextFormat(Answer, "answer") } });
+    if (!response.output_parsed) throw new Error("The assistant did not return an answer.");
+    page = response.output_parsed;
+  } else {
+    page = { summary: `Indexed evidence found for: ${question}`, sections: [], followups: [] };
+  }
+
+  const cited = [...new Set(page.sections.flatMap((section) => section.citedChunkIndexes))];
+  if (cited.some((chunkIndex) => chunkIndex >= rows.length)) throw new Error("Generated answer contains an invalid source citation.");
+
+  return {
+    summary: page.summary,
+    sections: page.sections.map((section) => ({
+      heading: section.heading,
+      markdown: section.markdown,
+      citedChunkIndexes: [...new Set(section.citedChunkIndexes)].filter((chunkIndex) => chunkIndex < rows.length),
+    })),
+    followups: page.followups,
+    citations: rows.map((row) => ({ path: row.path, startLine: row.startLine, endLine: row.endLine, chunkId: row.id, sha: index.sha })),
+  };
 }

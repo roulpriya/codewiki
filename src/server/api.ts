@@ -123,8 +123,10 @@ export async function handleApi(request: Request, pathname: string): Promise<Res
       if (!page || !revision) return json({ error: "Wiki page not found." }, 404);
       const snapshot = state.snapshots.find((item) => item.id === revision.snapshot_id);
       const index = snapshot ? await readSnapshotIndex(id, snapshot.sha) : null;
-      const citedIds = new Set(state.wikiCitations.filter((item) => item.revision_id === revision.id).map((item) => item.chunk_id));
-      const citations = (index?.chunks ?? []).filter((chunk) => citedIds.has(chunk.id)).map((chunk) => ({ path: chunk.path, start_line: chunk.startLine, end_line: chunk.endLine }));
+      const citations = state.wikiCitations.filter((item) => item.revision_id === revision.id).flatMap((item) => {
+        const chunk = index?.chunks.find((chunk) => chunk.id === item.chunk_id);
+        return chunk ? [{ path: chunk.path, start_line: chunk.startLine, end_line: chunk.endLine, evidence_index: item.evidence_index ?? index!.chunks.indexOf(chunk), sha: snapshot?.sha }] : [];
+      });
       return json({ id: page.id, slug: page.slug, title: page.title, revision_id: revision.id, summary: revision.summary, markdown: await getText(revision.object_key), created_at: revision.created_at, citations });
     }
     const pagesMatch = pathname.match(/^\/repositories\/([^/]+)\/pages$/);

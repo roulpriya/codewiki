@@ -2,6 +2,8 @@
 
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { MarkdownContent } from "./markdown-content";
+
 type RepositoryStatus = "idle" | "queued" | "checking" | "running" | "ready" | "failed";
 
 type Repository = {
@@ -27,7 +29,7 @@ type GithubRepository = {
   importStatus: RepositoryStatus | null;
 };
 
-type Citation = { path: string; start_line: number; end_line: number };
+type Citation = { path: string; start_line: number; end_line: number; evidence_index?: number; sha?: string };
 type PageSummary = { id: string; slug: string; title: string; summary: string | null; created_at: string | null };
 type PageDetail = PageSummary & { markdown: string; citations: Citation[] };
 type SyncRun = {
@@ -39,7 +41,16 @@ type SyncRun = {
   finished_at: string | null;
 };
 type WikiSection = { id: string; title: string; markdown: string; preview: string };
-type ChatMessage = { id: string; who: "You" | "Codewiki"; text: string; cites: Citation[]; failed?: boolean };
+type AnswerSection = { heading: string; markdown: string; cites: Citation[] };
+type ChatMessage = {
+  id: string;
+  who: "You" | "Codewiki";
+  text: string;
+  sections?: AnswerSection[];
+  followups?: string[];
+  cites: Citation[];
+  failed?: boolean;
+};
 
 const BUSY: RepositoryStatus[] = ["queued", "checking", "running"];
 
@@ -85,7 +96,7 @@ function relativeTime(value: string | null | undefined) {
 
 function sourceUrl(repository: Repository | null, citation: Citation) {
   if (!repository) return "#";
-  const ref = repository.indexed_sha ?? repository.default_branch;
+  const ref = citation.sha ?? repository.indexed_sha ?? repository.default_branch;
   return `https://github.com/${repository.owner}/${repository.name}/blob/${ref}/${citation.path}#L${citation.start_line}-L${citation.end_line}`;
 }
 
@@ -136,51 +147,12 @@ function parseWiki(markdown: string): { introduction: string; sections: WikiSect
   return { introduction: introduction.join("\n").trim(), sections };
 }
 
-function MarkdownContent({ markdown }: { markdown: string }) {
-  const blocks = markdown.split(/(```[\s\S]*?```)/g).filter(Boolean);
-  return (
-    <div className="prose">
-      {blocks.map((block, blockIndex) => {
-        if (block.startsWith("```")) {
-          return (
-            <pre key={blockIndex}>
-              <code>{block.replace(/^```[^\n]*\n?/, "").replace(/```$/, "")}</code>
-            </pre>
-          );
-        }
-        return block
-          .split(/\n{2,}/)
-          .filter(Boolean)
-          .map((part, partIndex) => {
-            const key = `${blockIndex}-${partIndex}`;
-            const heading = part.match(/^(#{1,4})\s+([\s\S]+)$/);
-            if (heading) {
-              const level = heading[1].length;
-              if (level === 1) return <h1 key={key}>{heading[2]}</h1>;
-              if (level === 2) return <h2 key={key}>{heading[2]}</h2>;
-              return <h3 key={key}>{heading[2]}</h3>;
-            }
-            const lines = part.split("\n");
-            if (lines.every((line) => /^[-*]\s+/.test(line))) {
-              return <ul key={key}>{lines.map((line) => <li key={line}>{line.replace(/^[-*]\s+/, "")}</li>)}</ul>;
-            }
-            if (lines.every((line) => /^\d+\.\s+/.test(line))) {
-              return <ol key={key}>{lines.map((line) => <li key={line}>{line.replace(/^\d+\.\s+/, "")}</li>)}</ol>;
-            }
-            if (lines.every((line) => line.trim().startsWith("|"))) {
-              return <pre className="prose-table" key={key}>{part}</pre>;
-            }
-            return <p key={key}>{part}</p>;
-          });
-      })}
-    </div>
-  );
-}
-
 export default function Home() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [githubRepositories, setGithubRepositories] = useState<GithubRepository[] | null>(null);
   const [activeRepositoryId, setActiveRepositoryId] = useState<string | null>(null);
+  const [homeRepositoryId, setHomeRepositoryId] = useState("");
+  const [homeQuestion, setHomeQuestion] = useState("");
   const [pages, setPages] = useState<PageSummary[]>([]);
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
   const [page, setPage] = useState<PageDetail | null>(null);
@@ -215,9 +187,16 @@ export default function Home() {
   );
   const latestRun = runs[0] ?? null;
   const wiki = useMemo(() => parseWiki(page?.markdown ?? ""), [page?.markdown]);
-  const activeSection = wiki.sections.find((section) => section.id === activeSectionId) ?? null;
+  const jumpToSection = (id: string) => {
+    setActiveSectionId(id);
+    const target = document.getElementById(id);
+    target?.scrollIntoView({ block: "start", behavior: "smooth" });
+    target?.focus({ preventScroll: true });
+  };
   const isBusy = activeRepository ? BUSY.includes(activeRepository.status) : false;
   const canAsk = Boolean(activeRepository?.indexed_sha);
+  const readyRepositories = repositories.filter((repository) => repository.indexed_sha);
+  const homeRepository = readyRepositories.find((repository) => repository.id === homeRepositoryId) ?? readyRepositories[0];
 
   /* ── loading ──────────────────────────────────────────────────── */
 
@@ -254,7 +233,10 @@ export default function Home() {
     );
     setRuns(runRecords);
     if (repository.indexed_sha) {
-      const pageRecords = await requestJson<PageSummary[]>(`/repositories/${id}/pages`);
+      const records = await requestJson<PageSummary[]>(`/repositories/${id}/pages`);
+      // Model-generated legacy slugs can leave multiple versions of the same guide.
+      const pageRecords = records.sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))
+        .filter((item, index, all) => all.findIndex((other) => other.title.trim().toLowerCase() === item.title.trim().toLowerCase()) === index);
       setPages(pageRecords);
       setActiveSlug((current) =>
         current && pageRecords.some((item) => item.slug === current) ? current : pageRecords[0]?.slug ?? null,
@@ -362,7 +344,9 @@ export default function Home() {
   }, [askOpen]);
 
   useEffect(() => {
-    logEnd.current?.scrollIntoView({ block: "end" });
+    const latest = chat.at(-1);
+    if (latest?.who === "Codewiki") document.getElementById(latest.id)?.scrollIntoView({ block: "start" });
+    else logEnd.current?.scrollIntoView({ block: "end" });
   }, [chat, isAnswering]);
 
   /* ── repository list ──────────────────────────────────────────── */
@@ -491,8 +475,8 @@ export default function Home() {
   }
 
   const ask = useCallback(
-    async (question: string) => {
-      const repository = activeRepository;
+    async (question: string, selectedRepository?: Repository) => {
+      const repository = selectedRepository ?? activeRepository;
       if (!repository?.indexed_sha) return;
       const trimmed = question.trim();
       if (!trimmed || isAnswering) return;
@@ -502,33 +486,46 @@ export default function Home() {
       setIsAnswering(true);
       try {
         const data = await requestJson<{
-          answer: string;
-          citations: Array<{ path: string; startLine: number; endLine: number }>;
+          summary: string;
+          sections: Array<{ heading: string; markdown: string; citedChunkIndexes: number[] }>;
+          followups: string[];
+          citations: Array<{ path: string; startLine: number; endLine: number; sha?: string }>;
         }>(`/repositories/${repository.id}/questions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ question: trimmed }),
+          signal: AbortSignal.timeout(180_000),
         });
+        const cites: Citation[] = data.citations.map((citation, evidenceIndex) => ({
+          path: citation.path,
+          start_line: citation.startLine,
+          end_line: citation.endLine,
+          sha: citation.sha,
+          evidence_index: evidenceIndex,
+        }));
         setChat((current) => [
           ...current,
           {
             id: `a-${Date.now()}`,
             who: "Codewiki",
-            text: data.answer,
-            cites: data.citations.map((citation) => ({
-              path: citation.path,
-              start_line: citation.startLine,
-              end_line: citation.endLine,
+            text: data.summary,
+            sections: data.sections.map((section) => ({
+              heading: section.heading,
+              markdown: section.markdown,
+              cites: section.citedChunkIndexes.map((chunkIndex) => cites[chunkIndex]).filter((cite): cite is Citation => Boolean(cite)),
             })),
+            followups: data.followups,
+            cites,
           },
         ]);
       } catch (error) {
+        setAskInput(trimmed);
         setChat((current) => [
           ...current,
           {
             id: `a-${Date.now()}`,
             who: "Codewiki",
-            text: error instanceof Error ? error.message : "Question could not be answered.",
+            text: error instanceof Error && error.name === "TimeoutError" ? "The answer took too long. Please try again." : error instanceof Error ? error.message : "Question could not be answered.",
             cites: [],
             failed: true,
           },
@@ -688,7 +685,7 @@ export default function Home() {
                     type="button"
                     onClick={() => {
                       setActiveSlug(summary.slug);
-                      setActiveSectionId("overview");
+                      jumpToSection("overview");
                     }}
                   >
                     {summary.title}
@@ -699,7 +696,7 @@ export default function Home() {
                         className={`nav-item nav-sub ${section.id === activeSectionId ? "is-active" : ""}`}
                         key={section.id}
                         type="button"
-                        onClick={() => setActiveSectionId(section.id)}
+                        onClick={() => jumpToSection(section.id)}
                       >
                         {section.title}
                       </button>
@@ -753,21 +750,55 @@ export default function Home() {
                 </form>
 
                 {chat.length > 0 && (
-                  <section className="ask-results" aria-label="Conversation">
+                  <section className="ask-results" aria-label="Conversation" aria-live="polite">
                     {chat.map((message) => (
-                      <div className="ask-result" key={message.id}>
+                      <div className="ask-result" id={message.id} key={message.id}>
                         <span className="msg-who">{message.who}</span>
-                        <span className={`msg-text ${message.who === "You" ? "is-you" : ""} ${message.failed ? "is-error" : ""}`}>
-                          {message.text}
-                        </span>
-                        {message.cites.length > 0 && (
-                          <span className="msg-cites">
-                            {message.cites.map((citation) => (
-                              <a className="msg-cite" key={`${message.id}-${citation.path}-${citation.start_line}`} href={sourceUrl(activeRepository, citation)} target="_blank" rel="noreferrer">
-                                {citation.path}:{citation.start_line}–{citation.end_line}
-                              </a>
+                        {message.sections && message.sections.length > 0 ? (
+                          <div className="msg-structured">
+                            <div className="msg-summary"><MarkdownContent markdown={message.text} /></div>
+                            {message.sections.map((section, sectionIndex) => (
+                              <details className="msg-section" key={`${message.id}-s-${sectionIndex}`} open>
+                                <summary className="msg-section-heading">{section.heading}</summary>
+                                <div className="msg-section-body">
+                                  <MarkdownContent markdown={section.markdown} />
+                                  {section.cites.length > 0 && (
+                                    <span className="msg-cites">
+                                      {section.cites.map((citation, index) => (
+                                        <a className="msg-cite" key={`${message.id}-${sectionIndex}-${citation.path}-${citation.start_line}`} href={sourceUrl(activeRepository, citation)} target="_blank" rel="noreferrer">
+                                          [{citation.evidence_index ?? index}] {citation.path}:{citation.start_line}–{citation.end_line}
+                                        </a>
+                                      ))}
+                                    </span>
+                                  )}
+                                </div>
+                              </details>
                             ))}
-                          </span>
+                            {message.followups && message.followups.length > 0 && (
+                              <div className="msg-followups">
+                                {message.followups.map((followup) => (
+                                  <button className="chip" key={followup} type="button" disabled={!canAsk || isAnswering} onClick={() => void ask(followup)}>
+                                    {followup}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <>
+                            <div className={`msg-text ${message.who === "You" ? "is-you" : ""} ${message.failed ? "is-error" : ""}`}>
+                              <MarkdownContent markdown={message.text} />
+                            </div>
+                            {message.cites.length > 0 && (
+                              <span className="msg-cites">
+                                {message.cites.map((citation, index) => (
+                                  <a className="msg-cite" key={`${message.id}-${citation.path}-${citation.start_line}`} href={sourceUrl(activeRepository, citation)} target="_blank" rel="noreferrer">
+                                    [{citation.evidence_index ?? index}] {citation.path}:{citation.start_line}–{citation.end_line}
+                                  </a>
+                                ))}
+                              </span>
+                            )}
+                          </>
                         )}
                       </div>
                     ))}
@@ -800,93 +831,50 @@ export default function Home() {
                 )}
               </section>
             ) : page ? (
-              activeSection ? (
-                <>
-                  <button className="back-link" type="button" onClick={() => setActiveSectionId("overview")}>
-                    ← {page.title}
-                  </button>
-                  <h1 className="doc-title">{activeSection.title}</h1>
-                  <MarkdownContent markdown={activeSection.markdown} />
-                </>
-              ) : (
-                <>
+              <article className="architecture-article">
+                <header id="overview" className="article-header" tabIndex={-1}>
+                  <p className="eyebrow">Repository guide</p>
                   <h1 className="doc-title">{page.title}</h1>
-                  {page.summary && (
-                    <p className="doc-lede">
-                      {page.summary}
-                      {citations.length > 0 && (
-                        <a className="cite" href="#sources">
-                          1
-                        </a>
-                      )}
-                    </p>
-                  )}
-
-                  <section className="ask-card">
-                    <span className="ask-card-title">Ask this repository</span>
-                    <input
-                      className="input input-lg"
-                      type="text"
-                      placeholder="Which part handles my access token?"
-                      value={askInput}
-                      disabled={!canAsk}
-                      onChange={(event) => setAskInput(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          setAskOpen(true);
-                          void ask(askInput);
-                        }
-                      }}
-                    />
-                    <div className="ask-card-prompts">
-                      {STARTERS.map((prompt) => (
-                        <button
-                          className="chip"
-                          key={prompt}
-                          type="button"
-                          disabled={!canAsk}
-                          onClick={() => {
-                            setAskOpen(true);
-                            void ask(prompt);
-                          }}
-                        >
-                          {prompt}
-                        </button>
-                      ))}
-                    </div>
-                    <span className="ask-card-note">
-                      {canAsk
-                        ? "Every answer cites the file and line it came from."
-                        : "Answers become available once the first index finishes."}
-                    </span>
+                  {page.summary && <p className="doc-lede">{page.summary}</p>}
+                  <div className="article-meta">
+                    <span>{wiki.sections.length} sections</span>
+                    {citations.length > 0 && <a href="#sources">{citations.length} source references</a>}
+                    {page.created_at && <span>Updated {relativeTime(page.created_at)}</span>}
+                  </div>
+                </header>
+                <form className="overview-ask" onSubmit={(event) => { event.preventDefault(); setAskOpen(true); void ask(askInput); }}>
+                  <label htmlFor="overview-question">Ask this repository</label>
+                  <p>Understand how it works, trace a flow, or find the code you need.</p>
+                  <div className="overview-ask-input">
+                    <input id="overview-question" className="input" placeholder="How does this project work?" value={askInput} disabled={!canAsk || isAnswering} onChange={(event) => setAskInput(event.target.value)} />
+                    <button className="btn btn-accent" type="submit" disabled={!canAsk || isAnswering || !askInput.trim()}>Ask →</button>
+                  </div>
+                  <div className="overview-ask-starters">
+                    {["Trace the main execution flow.", "Where should I start reading the code?"].map((prompt) => (
+                      <button key={prompt} className="chip" type="button" disabled={!canAsk || isAnswering} onClick={() => { setAskOpen(true); void ask(prompt); }}>{prompt}</button>
+                    ))}
+                  </div>
+                  <span className="overview-ask-note">{canAsk ? "Answers grounded in your repository, with source references." : "Ask becomes available when the first index is ready."}</span>
+                </form>
+                <div className="mobile-contents">
+                  <label htmlFor="section-jump">Jump to section</label>
+                  <select id="section-jump" className="input" value={activeSectionId} onChange={(event) => jumpToSection(event.target.value)}>
+                    <option value="overview">Overview</option>
+                    {wiki.sections.map((section) => <option key={section.id} value={section.id}>{section.title}</option>)}
+                  </select>
+                </div>
+                {wiki.introduction && <MarkdownContent markdown={wiki.introduction} />}
+                {wiki.sections.map((section, index) => (
+                  <section className="article-section" id={section.id} key={section.id} tabIndex={-1} aria-labelledby={`${section.id}-title`}>
+                    <h2 id={`${section.id}-title`}><span className="section-number">{String(index + 1).padStart(2, "0")}</span>{section.title}</h2>
+                    <MarkdownContent markdown={section.markdown} />
                   </section>
-
-                  {wiki.introduction && <MarkdownContent markdown={wiki.introduction} />}
-
-                  {wiki.sections.length > 0 && (
-                    <div className="block">
-                      <h2 className="block-title">How it is put together</h2>
-                      <p className="block-note">
-                        {wiki.sections.length} topic{wiki.sections.length === 1 ? "" : "s"}, each written from the code
-                        it describes.
-                      </p>
-                      <div className="rows">
-                        {wiki.sections.map((section) => (
-                          <button
-                            className="entry"
-                            key={section.id}
-                            type="button"
-                            onClick={() => setActiveSectionId(section.id)}
-                          >
-                            <span className="entry-key">{section.title}</span>
-                            <span className="entry-val">{section.preview || "Open this topic for more detail."}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )
+                ))}
+                <div className="article-question">
+                  <div><strong>Go deeper into the code</strong><p>Ask a question and explore the supporting source.</p></div>
+                  <button className="btn btn-outline btn-sm" type="button" disabled={!canAsk} onClick={() => setAskOpen(true)}>Ask this repository →</button>
+                </div>
+              </article>
             ) : (
               <>
                 <h1 className="doc-title">
@@ -922,7 +910,7 @@ export default function Home() {
                     target="_blank"
                     rel="noreferrer"
                   >
-                    <span className="source-n">{index + 1}</span>
+                    <span className="source-n">{citation.evidence_index ?? index}</span>
                     <span className="source-path">{citation.path}</span>
                     <span className="source-lines">
                       {citation.start_line}–{citation.end_line}
@@ -934,12 +922,36 @@ export default function Home() {
           </main>
         </div>
       ) : (
-        <main className="page">
-          <h1 className="page-title">Your repositories</h1>
-          <p className="page-lede">
-            Anything your access token can read. Add one and Codewiki keeps its wiki current on its own.{" "}
-            <a href="/discover">Browse them in detail →</a>
-          </p>
+        <main className="page home-page">
+          <section className="home-intro">
+            <p className="eyebrow">Your code, explained</p>
+            <h1 className="page-title">What do you want to understand?</h1>
+            <p className="page-lede">Ask your codebase a question. Get an answer with the files and lines behind it.</p>
+            {homeRepository ? (
+              <form className="home-composer" onSubmit={(event) => {
+                event.preventDefault();
+                if (!homeQuestion.trim() || isAnswering) return;
+                openRepository(homeRepository.id);
+                setAskOpen(true);
+                void ask(homeQuestion, homeRepository);
+                setHomeQuestion("");
+              }}>
+                <label className="home-repo-label" htmlFor="home-repository">Ask in</label>
+                <select id="home-repository" className="input" value={homeRepository.id} onChange={(event) => setHomeRepositoryId(event.target.value)}>
+                  {readyRepositories.map((repository) => <option key={repository.id} value={repository.id}>{repository.owner}/{repository.name}</option>)}
+                </select>
+                <label className="sr-only" htmlFor="home-question">Your question</label>
+                <textarea id="home-question" placeholder="How does authentication work in this project?" rows={3} value={homeQuestion} onChange={(event) => setHomeQuestion(event.target.value)} />
+                <div className="home-composer-footer"><span>Answers reference the indexed source.</span><button className="btn btn-accent" type="submit" disabled={!homeQuestion.trim() || isAnswering}>Ask Codewiki →</button></div>
+                <div className="overview-ask-starters">
+                  {["Trace the main execution flow.", "Where should I start reading the code?", "How is data stored?"].map((prompt) => <button className="chip" type="button" key={prompt} onClick={() => { setHomeQuestion(prompt); document.getElementById("home-question")?.focus(); }}>{prompt}</button>)}
+                </div>
+              </form>
+            ) : (
+              <div className="home-composer"><h2>Add a repository to start asking</h2><p>{repositories.length ? "Your repositories are not ready for questions yet. Open one below to check its import status." : "Choose a GitHub repository. Codewiki will index its source and prepare it for questions."}</p><a className="btn btn-accent" href="/discover">Discover repositories →</a></div>
+            )}
+          </section>
+          <div className="home-library-heading"><h2>Your repositories</h2><a href="/discover">Discover more →</a></div>
 
           <div className="repos-toolbar">
             <label className="sr-only" htmlFor="repository-filter">
@@ -966,7 +978,7 @@ export default function Home() {
           </div>
 
           <div className="rows">
-            {visibleRows.map((row) => (
+            {visibleRows.filter((row) => row.repositoryId).map((row) => (
               <div className="repo-row" key={row.key}>
                 <span className="repo-row-main">
                   <span className="repo-row-name">{row.fullName}</span>
@@ -993,7 +1005,7 @@ export default function Home() {
                 )}
               </div>
             ))}
-            {visibleRows.length === 0 && (
+            {visibleRows.filter((row) => row.repositoryId).length === 0 && (
               <p className="empty-note">
                 {githubRepositories === null
                   ? "Loading repositories…"

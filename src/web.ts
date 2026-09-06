@@ -17,6 +17,8 @@ const contentTypes: Record<string, string> = {
 };
 
 Bun.serve({
+  // Non-streaming model calls can exceed Bun's default idle timeout.
+  idleTimeout: 255,
   hostname: process.env.HOST ?? "0.0.0.0",
   port: Number(process.env.PORT ?? 3000),
   async fetch(request) {

@@ -43,6 +43,7 @@ export type WikiRevisionRecord = {
 export type WikiCitationRecord = {
   revision_id: string;
   chunk_id: string;
+  evidence_index?: number;
 };
 
 export type SyncRunRecord = {

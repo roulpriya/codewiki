@@ -42,7 +42,7 @@
     "claude": "bun run src/claude/agent.ts",
     "build": "bun run scripts/build.ts",
     "start": "bun run src/web.ts",
-    "test": "bun run build && bun test tests/*.test.mjs",
+    "test": "bun run build && bun test ./tests/*.test.mjs",
     "lint": "bun run eslint . --ignore-pattern dist",
     "prepack": "bun run scripts/prepack.ts"
   },
@@ -55,6 +55,8 @@
     "openai": "^7.5.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

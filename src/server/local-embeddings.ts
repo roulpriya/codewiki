@@ -27,8 +27,22 @@ export async function embedLocally(inputs: string[]) {
   if (!inputs.length) return [];
   const task = queued.then(() => new Promise<number[][]>((resolve, reject) => {
     const id = crypto.randomUUID();
-    pending.set(id, { resolve, reject });
-    embeddingWorker().postMessage({ id, inputs });
+    const timeout = setTimeout(() => {
+      pending.delete(id);
+      worker?.terminate();
+      worker = undefined;
+      reject(new Error("Local embedding request timed out after 120 seconds."));
+    }, 120_000);
+    pending.set(id, {
+      resolve: (vectors) => { clearTimeout(timeout); resolve(vectors); },
+      reject: (error) => { clearTimeout(timeout); reject(error); },
+    });
+    try { embeddingWorker().postMessage({ id, inputs }); }
+    catch (error) {
+      pending.delete(id);
+      clearTimeout(timeout);
+      reject(error);
+    }
   }));
   queued = task.then(() => undefined, () => undefined);
   return task;

@@ -16,11 +16,12 @@ onmessage = async ({ data }: MessageEvent<Work>) => {
     const model = await getExtractor();
     const output = await model(data.inputs, { pooling: "mean", normalize: true });
     const vectors = output.tolist() as number[][];
-    if (vectors.length !== data.inputs.length || vectors.some((vector) => vector.some((value) => !Number.isFinite(value)))) {
+    if (vectors.length !== data.inputs.length || vectors.some((vector) => !vector.length || vector.length !== vectors[0]?.length || vector.some((value) => !Number.isFinite(value)))) {
       throw new Error("The local embedding model returned invalid vectors.");
     }
     postMessage({ id: data.id, vectors });
   } catch (error) {
+    extractor = undefined;
     postMessage({ id: data.id, error: error instanceof Error ? error.message : "Local embedding worker failed." });
   }
 };

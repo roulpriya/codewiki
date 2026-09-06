@@ -88,6 +88,7 @@ The `/data` volume contains the complete local knowledge base:
 ```text
 /data/state.json             repository, wiki, revision, and run metadata
 /data/indexes/               searchable code chunks and optional embeddings
+/data/repositories/          shallow Git checkouts used for source reads
 /data/objects/               raw snapshots and generated Markdown revisions
 ```
 
@@ -122,8 +123,9 @@ wiki pages and grounded answer prose.
 
 Codewiki checks repositories when the app starts if their last check is due,
 then checks them periodically while it is running. The default interval is 24
-hours and can be changed with `SYNC_INTERVAL_HOURS`. A check fetches only the
-default branch head first. When its commit SHA is unchanged, the existing index
+hours and can be changed with `SYNC_INTERVAL_HOURS`. A check refreshes a local
+shallow Git checkout of the default branch. This avoids downloading repository
+files blob-by-blob through the GitHub API. When its commit SHA is unchanged, the existing index
 and wiki are retained without downloading files or calling the OpenAI API.
 When the SHA changes—from a merged pull request or a direct commit—Codewiki
 creates a new snapshot, index, and cited wiki revision. Use **Check now** in the

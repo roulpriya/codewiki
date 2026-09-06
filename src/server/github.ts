@@ -1,6 +1,9 @@
 import { config } from "./config.js";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
 
 type GitHubFile = { path: string; sha: string; content: string };
 export type GitHubViewer = { login: string; name: string | null; avatarUrl: string; htmlUrl: string };
@@ -22,8 +25,6 @@ export type AccessibleRepository = {
 const api = "https://api.github.com";
 const excluded = /(^|\/)(node_modules|vendor|dist|build|coverage|\.git)\/|\.(png|jpe?g|gif|pdf|zip|lock)$/i;
 const execFileAsync = promisify(execFile);
-const blobConcurrency = 4;
-const blobRequestSpacingMs = 100;
 
 export type GitHubAuthStatus = {
   authenticated: boolean;
@@ -96,20 +97,6 @@ async function request<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function mapWithConcurrency<T, R>(values: T[], limit: number, mapper: (value: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(values.length);
-  let cursor = 0;
-  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => {
-    while (true) {
-      const index = cursor;
-      cursor += 1;
-      if (index >= values.length) return;
-      results[index] = await mapper(values[index]);
-      await new Promise((resolve) => setTimeout(resolve, blobRequestSpacingMs));
-    }
-  }));
-  return results;
-}
 export async function readRepository(owner: string, name: string) {
   return request<{ default_branch: string }>(`/repos/${owner}/${name}`);
 }
@@ -155,16 +142,80 @@ export async function listAccessibleRepositories(): Promise<AccessibleRepository
     defaultBranch: repository.default_branch,
   }));
 }
-export async function readRepositoryHead(owner: string, name: string, ref: string) {
-  return request<{ sha: string }>(`/repos/${owner}/${name}/commits/${encodeURIComponent(ref)}`);
+function checkoutPath(owner: string, name: string) {
+  const id = createHash("sha256").update(`${owner.toLowerCase()}/${name.toLowerCase()}`).digest("hex");
+  return join(config.REPOSITORY_CACHE_DIR, id);
 }
+
+async function gitEnvironment() {
+  const { token } = await accessToken();
+  // Keep the credential out of the remote URL and command-line arguments.
+  return {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+    GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`,
+  };
+}
+
+async function git(args: string[], environment: NodeJS.ProcessEnv) {
+  try {
+    return await execFileAsync("git", args, { env: environment, timeout: 120_000, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
+  } catch (error) {
+    throw new Error(`Git checkout failed: ${error instanceof Error ? error.message : "Unknown Git error"}`);
+  }
+}
+
+async function hasCheckout(path: string, environment: NodeJS.ProcessEnv) {
+  try {
+    await git(["-C", path, "rev-parse", "--is-inside-work-tree"], environment);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function updateCheckout(owner: string, name: string, ref: string) {
+  const path = checkoutPath(owner, name);
+  const environment = await gitEnvironment();
+  const remote = `https://github.com/${owner}/${name}.git`;
+  if (!await hasCheckout(path, environment)) {
+    await rm(path, { recursive: true, force: true });
+    await mkdir(dirname(path), { recursive: true });
+    const temporaryPath = `${path}.tmp-${crypto.randomUUID()}`;
+    try {
+      await git(["clone", "--depth", "1", "--no-tags", "--branch", ref, remote, temporaryPath], environment);
+      await rename(temporaryPath, path);
+    } catch (error) {
+      await rm(temporaryPath, { recursive: true, force: true });
+      throw error;
+    }
+  } else {
+    await git(["-C", path, "fetch", "--depth", "1", "--no-tags", "origin", ref], environment);
+    await git(["-C", path, "checkout", "--detach", "--force", "FETCH_HEAD"], environment);
+  }
+  return path;
+}
+
+async function trackedFiles(path: string): Promise<GitHubFile[]> {
+  const { stdout } = await execFileAsync("git", ["-C", path, "ls-files", "-s", "-z"], { timeout: 30_000, windowsHide: true, maxBuffer: 20 * 1024 * 1024 });
+  const files: GitHubFile[] = [];
+  for (const record of stdout.split("\0")) {
+    if (!record) continue;
+    const match = record.match(/^\d+ ([0-9a-f]+) \d+\t(.+)$/);
+    if (!match || excluded.test(match[2])) continue;
+    const absolutePath = join(path, match[2]);
+    const metadata = await stat(absolutePath);
+    if (!metadata.isFile() || metadata.size >= 1_000_000) continue;
+    files.push({ path: relative(path, absolutePath), sha: match[1], content: await readFile(absolutePath, "utf8") });
+    if (files.length === 5000) break;
+  }
+  return files;
+}
+
 export async function snapshotRepository(owner: string, name: string, ref: string): Promise<{ sha: string; files: GitHubFile[] }> {
-  const commit = await request<{ sha: string; commit: { tree: { sha: string } } }>(`/repos/${owner}/${name}/commits/${encodeURIComponent(ref)}`);
-  const tree = await request<{ tree: Array<{ path: string; type: string; sha: string; size?: number }> }>(`/repos/${owner}/${name}/git/trees/${commit.commit.tree.sha}?recursive=1`);
-  const candidates = tree.tree.filter((entry) => entry.type === "blob" && !excluded.test(entry.path) && (entry.size ?? 0) < 1_000_000).slice(0, 5000);
-  const files = await mapWithConcurrency(candidates, blobConcurrency, async (entry) => {
-    const blob = await request<{ content: string; encoding: string }>(`/repos/${owner}/${name}/git/blobs/${entry.sha}`);
-    return { path: entry.path, sha: entry.sha, content: Buffer.from(blob.content.replace(/\n/g, ""), blob.encoding as BufferEncoding).toString("utf8") };
-  });
-  return { sha: commit.sha, files };
+  const path = await updateCheckout(owner, name, ref);
+  const { stdout } = await execFileAsync("git", ["-C", path, "rev-parse", "HEAD"], { timeout: 30_000, windowsHide: true });
+  return { sha: stdout.trim(), files: await trackedFiles(path) };
 }

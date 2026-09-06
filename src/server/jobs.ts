@@ -1,16 +1,19 @@
 import { config } from "./config.js";
-import { readRepositoryHead, snapshotRepository } from "./github.js";
+import { snapshotRepository } from "./github.js";
 import { authorOverview, hasCurrentEmbeddings, indexSnapshot } from "./knowledge.js";
 import { mutateState, readSnapshotIndex, readState } from "./state.js";
 import { putJson } from "./store.js";
 import { rawImportKey, type IndexJob } from "../lib/wiki-contracts.js";
 
 const activeJobs = new Map<string, Promise<void>>();
+// Bound checkout, snapshot, inference and authoring memory across repositories.
+let jobChain: Promise<void> = Promise.resolve();
 
 export async function enqueue(job: IndexJob) {
-  const key = `${job.repositoryId}:${job.targetSha}`;
+  const key = job.repositoryId;
   if (activeJobs.has(key)) return;
-  const operation = processJob(job).finally(() => activeJobs.delete(key));
+  const operation = jobChain.then(() => processJob(job)).finally(() => activeJobs.delete(key));
+  jobChain = operation.catch(() => undefined);
   activeJobs.set(key, operation);
   void operation.catch((error) => console.error("Codewiki import failed:", error));
 }
@@ -28,16 +31,18 @@ async function processJob(job: IndexJob) {
 
   try {
     const ref = job.targetSha === "default-branch" ? repository.default_branch : job.targetSha;
-    const head = await readRepositoryHead(repository.owner, repository.name, ref);
+    // A shallow Git fetch supplies both the commit and its tracked files, so
+    // indexing does not make one GitHub REST request per blob.
+    const snapshot = await snapshotRepository(repository.owner, repository.name, ref);
     const checkedAt = new Date().toISOString();
-    if (repository.indexed_sha === head.sha) {
-      const existingIndex = await readSnapshotIndex(repository.id, head.sha);
+    if (repository.indexed_sha === snapshot.sha) {
+      const existingIndex = await readSnapshotIndex(repository.id, snapshot.sha);
       if (existingIndex && hasCurrentEmbeddings(existingIndex)) {
         await mutateState((state) => {
           const current = state.repositories.find((item) => item.id === repository.id);
           if (current) { current.status = "ready"; current.last_checked_at = checkedAt; }
           const run = state.syncRuns.find((item) => item.id === runId);
-          if (run) { run.status = "completed"; run.detail = { changed: false, chunkCount: existingIndex.chunks.length, sha: head.sha }; run.finished_at = checkedAt; }
+          if (run) { run.status = "completed"; run.detail = { changed: false, chunkCount: existingIndex.chunks.length, sha: snapshot.sha }; run.finished_at = checkedAt; }
         });
         return;
       }
@@ -47,7 +52,6 @@ async function processJob(job: IndexJob) {
       const current = state.repositories.find((item) => item.id === repository.id);
       if (current) current.status = "running";
     });
-    const snapshot = await snapshotRepository(repository.owner, repository.name, head.sha);
     const rawKey = rawImportKey(repository.id, snapshot.sha);
     await putJson(rawKey, { repository: `${repository.owner}/${repository.name}`, sha: snapshot.sha, trigger: job.trigger, capturedAt: new Date().toISOString(), files: snapshot.files });
 
@@ -63,9 +67,11 @@ async function processJob(job: IndexJob) {
     });
 
     let index = await readSnapshotIndex(repository.id, snapshot.sha);
-    if (!index || !hasCurrentEmbeddings(index)) index = await indexSnapshot(repository.id, snapshotRecord.id, snapshot.sha, snapshot.files);
+    const needsIndex = !index || !hasCurrentEmbeddings(index);
+    if (needsIndex) index = await indexSnapshot(repository.id, snapshotRecord.id, snapshot.sha, snapshot.files);
+    if (!index) throw new Error("Snapshot index is unavailable.");
     const alreadyAuthored = (await readState()).wikiRevisions.some((revision) => revision.snapshot_id === snapshotRecord.id);
-    if (!alreadyAuthored) await authorOverview(repository.id, snapshotRecord.id, index.chunks);
+    if (needsIndex || !alreadyAuthored) await authorOverview(repository.id, snapshotRecord.id, index.chunks);
 
     await mutateState((state) => {
       const current = state.repositories.find((item) => item.id === repository.id);
@@ -112,8 +118,8 @@ export async function enqueueDueRepositories() {
 }
 
 export function startNightlyScheduler() {
-  void enqueueDueRepositories();
+  void enqueueDueRepositories().catch((error) => console.error("Repository scheduler failed:", error));
   const checkFrequencyMs = Math.min(config.SYNC_INTERVAL_HOURS * 60 * 60 * 1000, 60 * 60 * 1000);
-  const interval = setInterval(() => void enqueueDueRepositories(), checkFrequencyMs);
+  const interval = setInterval(() => void enqueueDueRepositories().catch((error) => console.error("Repository scheduler failed:", error)), checkFrequencyMs);
   interval.unref();
 }

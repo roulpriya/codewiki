@@ -42,7 +42,7 @@ export async function codexSubscriptionAvailable() {
 export async function aiStatus() {
   const [key, claude, codex] = await Promise.all([openAIApiKey(), claudeSubscriptionAvailable(), codexSubscriptionAvailable()]);
   return {
-    activeProvider: codex ? "codex" : claude ? "claude" : key ? "openai" : null,
+    activeProvider: claude ? "claude" : codex ? "codex" : key ? "openai" : null,
     codex: { available: codex, message: codex ? "Codex is connected through your ChatGPT plan." : "Sign in to Codex with your ChatGPT account." },
     claude: { available: claude, message: claude ? "Claude Code is connected through your subscription." : "Install Claude Code and sign in with an eligible subscription." },
     openai: { available: Boolean(key), source: config.OPENAI_API_KEY ? "environment" : key ? "local" : null },
