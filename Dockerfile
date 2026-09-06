@@ -11,7 +11,6 @@ COPY docker/entrypoint.sh /usr/local/bin/codewiki
 RUN chmod +x /usr/local/bin/codewiki && mkdir -p /data
 
 ENV DATA_DIR=/data \
-  LOCAL_EMBEDDING_CACHE_DIR=/tmp/codewiki-huggingface \
   APP_ORIGIN=http://localhost:3000
 
 VOLUME ["/data"]

@@ -1,6 +1,6 @@
 import { config } from "./config.js";
 import { snapshotRepository } from "./github.js";
-import { authorOverview, hasCurrentEmbeddings, indexSnapshot } from "./knowledge.js";
+import { authorOverview, hasCurrentIndex, indexSnapshot } from "./knowledge.js";
 import { mutateState, readSnapshotIndex, readState } from "./state.js";
 import { putJson } from "./store.js";
 import { rawImportKey, type IndexJob } from "../lib/wiki-contracts.js";
@@ -37,7 +37,7 @@ async function processJob(job: IndexJob) {
     const checkedAt = new Date().toISOString();
     if (repository.indexed_sha === snapshot.sha) {
       const existingIndex = await readSnapshotIndex(repository.id, snapshot.sha);
-      if (existingIndex && hasCurrentEmbeddings(existingIndex)) {
+      if (existingIndex && hasCurrentIndex(existingIndex)) {
         await mutateState((state) => {
           const current = state.repositories.find((item) => item.id === repository.id);
           if (current) { current.status = "ready"; current.last_checked_at = checkedAt; }
@@ -67,7 +67,7 @@ async function processJob(job: IndexJob) {
     });
 
     let index = await readSnapshotIndex(repository.id, snapshot.sha);
-    const needsIndex = !index || !hasCurrentEmbeddings(index);
+    const needsIndex = !index || !hasCurrentIndex(index);
     if (needsIndex) index = await indexSnapshot(repository.id, snapshotRecord.id, snapshot.sha, snapshot.files);
     if (!index) throw new Error("Snapshot index is unavailable.");
     const alreadyAuthored = (await readState()).wikiRevisions.some((revision) => revision.snapshot_id === snapshotRecord.id);

@@ -48,7 +48,6 @@ function defaultDataDir() {
 function runtimeEnv() {
   const env = { ...process.env };
   env.DATA_DIR ??= defaultDataDir();
-  env.LOCAL_EMBEDDING_CACHE_DIR ??= join(process.cwd(), ".cache", "huggingface");
   return env;
 }
 

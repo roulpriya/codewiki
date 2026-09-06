@@ -72,15 +72,13 @@ export type IndexChunk = {
   startLine: number;
   endLine: number;
   content: string;
-  contentHash: string;
-  embedding: number[] | null;
 };
 
 export type SnapshotIndex = {
   repositoryId: string;
   snapshotId: string;
   sha: string;
-  embeddingProfile: string;
+  indexProfile: string;
   chunks: IndexChunk[];
 };
 

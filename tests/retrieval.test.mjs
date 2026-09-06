@@ -1,10 +1,10 @@
 import { test, expect } from "bun:test";
-import { splitFile, cosineSimilarity, retrieve, overviewEvidence } from "../src/server/retrieval.ts";
+import { splitFile, retrieve, overviewEvidence } from "../src/server/retrieval.ts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MarkdownContent } from "../src/app/markdown-content.tsx";
 
-const chunk = (path, content, embedding = null) => ({ id: path, path, content, startLine: 1, endLine: 1, contentHash: path, embedding });
+const chunk = (path, content) => ({ id: path, path, content, startLine: 1, endLine: 1 });
 
 test("chunks preserve line coordinates, overlap and bound pathological lines", () => {
   const lines = Array.from({ length: 180 }, (_, i) => `line ${i + 1}`);
@@ -16,13 +16,7 @@ test("chunks preserve line coordinates, overlap and bound pathological lines", (
   expect(splitFile("empty.ts", "\n")).toEqual([]);
 });
 
-test("invalid vector dimensions cannot produce false similarity", () => {
-  expect(cosineSimilarity([1], [1, 2])).toBe(0);
-  expect(cosineSimilarity([NaN], [1])).toBe(0);
-  expect(cosineSimilarity([1, 0], [1, 0])).toBe(1);
-});
-
-test("lexical fallback finds paths and camelCase symbols without embedding service", () => {
+test("lexical retrieval finds paths and camelCase symbols", () => {
   const rows = [chunk("src/login.ts", "function refreshToken() {}"), chunk("readme.md", "A project")];
   expect(retrieve(rows, "refresh token")[0].path).toBe("src/login.ts");
   expect(retrieve(rows, "login")[0].path).toBe("src/login.ts");

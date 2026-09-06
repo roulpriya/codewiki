@@ -30,6 +30,6 @@ test("uses only local filesystem persistence", async () => {
   assert.match(stateStore, /indexes/);
   assert.match(stateStore, /rename\(temporaryPath/);
   assert.match(compose, /codewiki-data:\/data/);
-  assert.doesNotMatch(`${compose}\n${dockerfile}\n${packageJson}`, /postgres|redis|bullmq|pgvector|minio|drizzle/i);
+  assert.doesNotMatch(`${compose}\n${dockerfile}\n${packageJson}`, /postgres|redis|bullmq|minio|drizzle/i);
   await assert.rejects(access(new URL("../src/app/_sites-preview", import.meta.url)));
 });

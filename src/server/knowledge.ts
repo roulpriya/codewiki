@@ -8,7 +8,6 @@ import { z } from "zod";
 import { zodTextFormat } from "openai/helpers/zod";
 import { config } from "./config.js";
 import { claudeSubscriptionAvailable, codexSubscriptionAvailable, openAIApiKey } from "./ai.js";
-import { embedLocally } from "./local-embeddings.js";
 import { mutateState, readSnapshotIndex, readState, writeSnapshotIndex, type IndexChunk } from "./state.js";
 import { putText } from "./store.js";
 import { execFileWithInput } from "./process.js";
@@ -20,45 +19,18 @@ const fileTypes = new Set(["ts", "tsx", "js", "jsx", "py", "go", "rs", "md", "js
 
 export const isExcluded = (path: string) => /(^|\/)(node_modules|vendor|dist|build|coverage|\.git)\/|\.(png|jpe?g|gif|pdf|zip|lock)$/i.test(path) || /(^|\/)(\.env|.*secret.*|.*credential.*)$/i.test(path);
 
-export function embeddingProfile() {
-  return `local:${config.LOCAL_EMBEDDING_MODEL}:q8:mean-normalized:${CHUNK_PROFILE}`;
-}
-
-export function hasCurrentEmbeddings(index: { embeddingProfile: string }) {
-  return index.embeddingProfile === embeddingProfile();
-}
-
-async function embeddings(inputs: string[]) {
-  const batchSize = 8;
-  const vectors: number[][] = [];
-  for (let offset = 0; offset < inputs.length; offset += batchSize) {
-    vectors.push(...await embedLocally(inputs.slice(offset, offset + batchSize)));
-    // Yield between worker batches so other embedding requests can make progress.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  return vectors;
+export function hasCurrentIndex(index: { indexProfile?: string }) {
+  return index.indexProfile === CHUNK_PROFILE;
 }
 
 export async function indexSnapshot(repositoryId: string, snapshotId: string, sha: string, files: Array<{ path: string; sha: string; content: string }>) {
   const sourceChunks = files
     .filter((file) => !isExcluded(file.path) && fileTypes.has(file.path.split(".").pop()?.toLowerCase() ?? ""))
     .flatMap((file) => splitFile(file.path, file.content));
-  const repository = (await readState()).repositories.find((item) => item.id === repositoryId);
-  const previous = repository?.indexed_sha ? await readSnapshotIndex(repositoryId, repository.indexed_sha) : null;
-  const hash = (content: string) => createHash("sha256").update(content).digest("hex");
-  const cached = new Map<string, number[]>();
-  if (previous && hasCurrentEmbeddings(previous)) {
-    for (const chunk of previous.chunks) if (chunk.embedding?.length) cached.set(chunk.contentHash, chunk.embedding);
-  }
-  const missing = [...new Map(sourceChunks.filter((chunk) => !cached.has(hash(chunk.content))).map((chunk) => [hash(chunk.content), chunk.content])).entries()];
-  const generated = await embeddings(missing.map(([, content]) => content));
-  missing.forEach(([key], index) => cached.set(key, generated[index]));
   const chunks: IndexChunk[] = sourceChunks.map((chunk) => ({
     id: createHash("sha256").update(`${repositoryId}:${sha}:${chunk.path}:${chunk.startLine}:${chunk.content}`).digest("hex"), ...chunk,
-    contentHash: createHash("sha256").update(chunk.content).digest("hex"),
-    embedding: cached.get(hash(chunk.content)) ?? null,
   }));
-  const snapshotIndex = { repositoryId, snapshotId, sha, embeddingProfile: embeddingProfile(), chunks };
+  const snapshotIndex = { repositoryId, snapshotId, sha, indexProfile: CHUNK_PROFILE, chunks };
   await writeSnapshotIndex(snapshotIndex);
   return snapshotIndex;
 }
@@ -245,12 +217,7 @@ export async function answerQuestion(repositoryId: string, question: string) {
   const index = await readSnapshotIndex(repositoryId, repository.indexed_sha);
   if (!index) return emptyAnswer("I do not have enough indexed evidence to answer that question.");
 
-  let queryVector: number[] | undefined;
-  if (hasCurrentEmbeddings(index)) {
-    try { [queryVector] = await embeddings([question]); }
-    catch (error) { console.warn("Semantic search unavailable; using lexical retrieval.", error); }
-  }
-  const rows = retrieve(index.chunks, question, queryVector);
+  const rows = retrieve(index.chunks, question);
   if (!rows.length) return emptyAnswer("I do not have enough indexed evidence to answer that question.");
 
   const evidence = rows.map((row, index) => `[${index}] ${row.path}:${row.startLine}-${row.endLine}\n${row.content}`).join("\n\n");

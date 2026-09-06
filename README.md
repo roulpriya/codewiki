@@ -5,10 +5,6 @@ one local application or Docker image. GitHub access uses your personal access
 token, and every repository snapshot, search index, wiki revision, and sync run
 is stored as an ordinary file beneath one data directory.
 
-The local embedding model is cached separately at `.cache/huggingface` by
-default. It can be safely deleted and is never part of the application data or
-repository history.
-
 ## Run it
 
 Codewiki requires [Bun](https://bun.sh) 1.3.12 or newer for local development.
@@ -87,14 +83,14 @@ The `/data` volume contains the complete local knowledge base:
 
 ```text
 /data/state.json             repository, wiki, revision, and run metadata
-/data/indexes/               searchable code chunks and optional embeddings
+/data/indexes/               searchable code chunks
 /data/repositories/          shallow Git checkouts used for source reads
 /data/objects/               raw snapshots and generated Markdown revisions
 ```
 
 State and index files are replaced atomically, so restarting does not require a
 database recovery step. Back up `/data` to preserve the knowledge base.
-PostgreSQL, Redis, pgvector, S3, MinIO, GitHub Apps, OAuth, teams, and
+PostgreSQL, Redis, S3, MinIO, GitHub Apps, OAuth, teams, and
 multi-user workflows are intentionally outside this local version.
 
 ## Claude Agent SDK
@@ -109,15 +105,6 @@ bun run claude -- "Explain the repository architecture."
 
 The agent is limited to `Read`, `Glob`, and `Grep`, executes with Bun, and has
 its working directory set to this repository.
-
-## Code embeddings
-
-Codewiki runs Jina's `jinaai/jina-embeddings-v2-base-code` locally through
-Hugging Face Transformers.js and Bun—no embedding API key or Python runtime is
-required. The first run downloads the quantized ONNX model into the configured
-local cache. Existing repositories are automatically re-indexed after an
-embedding model change. OpenAI remains optional and is used only for authored
-wiki pages and grounded answer prose.
 
 ## Repository sync
 
